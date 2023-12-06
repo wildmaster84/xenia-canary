@@ -236,6 +236,7 @@ class EmulatorWindow {
                          bool vibrate = true);
   void GamepadHotKeys();
   void ToggleGPUSetting(gpu_cvar index);
+  void NetplayStatus();
   void DisplayHotKeysConfig();
 
   static std::string CanonicalizeFileExtension(
