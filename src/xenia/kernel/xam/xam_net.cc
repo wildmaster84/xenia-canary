@@ -20,6 +20,7 @@
 #include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 #include "xenia/kernel/xevent.h"
 #include "xenia/kernel/xsocket.h"
+#include "xenia/kernel/hinternet.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
 
@@ -219,7 +220,29 @@ typedef struct {
   uint32_t probe_replies_sent_count;
 } XNQOSLISTENSTATS;
 
+typedef struct {
+  xe::be<uint32_t> dwStructSize;
+  char* lpszScheme;
+  xe::be<uint32_t> dwSchemeLength;
+  xe::be<uint32_t> nScheme;
+  char* lpszHostName;
+  xe::be<uint32_t> dwHostNameLength;
+  xe::be<uint32_t> nPort;
+  char* lpszUserName;
+  xe::be<uint32_t> dwUserNameLength;
+  char* lpszPassword;
+  xe::be<uint32_t> dwPasswordLength;
+  char* lpszUrlPath;
+  xe::be<uint32_t> dwUrlPathLength;
+  char* lpszExtraInfo;
+  xe::be<uint32_t> dwExtraInfoLength;
+} URL_COMPONENTS, *PURL_COMPONENTS;
+
 XNetStartupParams xnet_startup_params{};
+
+// To store the user_agent for requests
+std::string userAgent;
+HINTERNET* hInternet;
 
 void Update_XNetStartupParams(XNetStartupParams& dest,
                               const XNetStartupParams& src) {
@@ -1144,47 +1167,47 @@ dword_result_t NetDll_XNetQosLookup_entry(
 
     if (chunk.http_code == HTTP_STATUS_CODE::HTTP_OK ||
         chunk.http_code == HTTP_STATUS_CODE::HTTP_NO_CONTENT) {
-      qos->info[i].data_ptr = 0;
-      qos->info[i].data_len = 0;
-      qos->info[i].flags =
-          XNET_XNQOSINFO::COMPLETE | XNET_XNQOSINFO::TARGET_CONTACTED;
+        qos->info[i].data_ptr = 0;
+        qos->info[i].data_len = 0;
+        qos->info[i].flags =
+            XNET_XNQOSINFO::COMPLETE | XNET_XNQOSINFO::TARGET_CONTACTED;
 
-      if (chunk.size) {
-        uint32_t data_ptr =
-            kernel_memory()->SystemHeapAlloc(static_cast<uint32_t>(chunk.size));
-        uint32_t* data = kernel_memory()->TranslateVirtual<uint32_t*>(data_ptr);
+        if (chunk.size) {
+            uint32_t data_ptr =
+                kernel_memory()->SystemHeapAlloc(static_cast<uint32_t>(chunk.size));
+            uint32_t* data = kernel_memory()->TranslateVirtual<uint32_t*>(data_ptr);
 
-        memcpy(data, chunk.response, chunk.size);
+            memcpy(data, chunk.response, chunk.size);
 
-        qos->info[i].data_ptr = data_ptr;
-        qos->info[i].data_len = static_cast<uint16_t>(chunk.size);
-        qos->info[i].flags |= XNET_XNQOSINFO::DATA_RECEIVED;
-      }
+            qos->info[i].data_ptr = data_ptr;
+            qos->info[i].data_len = static_cast<uint16_t>(chunk.size);
+            qos->info[i].flags |= XNET_XNQOSINFO::DATA_RECEIVED;
+        }
 
-      qos->info[i].probes_xmit = 4;
-      qos->info[i].probes_recv = 4;
-      qos->info[i].rtt_min_in_msecs = 4;
-      qos->info[i].rtt_med_in_msecs = 10;
-      qos->info[i].up_bits_per_sec = 20 * 1024;
-      qos->info[i].down_bits_per_sec = 20 * 1024;
+        qos->info[i].probes_xmit = 4;
+        qos->info[i].probes_recv = 4;
+        qos->info[i].rtt_min_in_msecs = 4;
+        qos->info[i].rtt_med_in_msecs = 10;
+        qos->info[i].up_bits_per_sec = 20 * 1024;
+        qos->info[i].down_bits_per_sec = 20 * 1024;
 
-      qos->count_pending =
-          std::max(static_cast<int>(qos->count_pending - 1), 0);
+        qos->count_pending =
+            std::max(static_cast<int>(qos->count_pending - 1), 0);
     }
 
     // Prevent L4D2 removing info[probes - 1] entry
     if (i == (probes - 1)) {
-      memcpy(&qos->info[probes], &qos->info[i], sizeof(XNQOSINFO));
+        memcpy(&qos->info[probes], &qos->info[i], sizeof(XNQOSINFO));
     }
 
     *qos_ptr = qos_guest;
   }
 
   if (event_handle) {
-    auto ev =
-        kernel_state()->object_table()->LookupObject<XEvent>(event_handle);
-    assert_not_null(ev);
-    ev->Set(0, false);
+      auto ev =
+          kernel_state()->object_table()->LookupObject<XEvent>(event_handle);
+      assert_not_null(ev);
+      ev->Set(0, false);
   }
 
   return X_ERROR_SUCCESS;
@@ -1192,73 +1215,193 @@ dword_result_t NetDll_XNetQosLookup_entry(
 DECLARE_XAM_EXPORT1(NetDll_XNetQosLookup, kNetworking, kImplemented);
 
 dword_result_t NetDll_XNetQosGetListenStats_entry(dword_t caller, dword_t unk,
-                                                  dword_t pxnkid,
-                                                  lpdword_t pQosListenStats) {
-  XELOGI("XNetQosGetListenStats({:08X}, {:08X}, {:08X}, {:08X})", caller, unk,
-         caller, unk, pxnkid, pQosListenStats.guest_address());
+    dword_t pxnkid,
+    lpdword_t pQosListenStats) {
+    XELOGI("XNetQosGetListenStats({:08X}, {:08X}, {:08X}, {:08X})", caller, unk,
+        caller, unk, pxnkid, pQosListenStats.guest_address());
 
-  if (pQosListenStats) {
-    auto qos = kernel_memory()->TranslateVirtual<XNQOSLISTENSTATS*>(
-        pQosListenStats.guest_address());
+    if (pQosListenStats) {
+        auto qos = kernel_memory()->TranslateVirtual<XNQOSLISTENSTATS*>(
+            pQosListenStats.guest_address());
 
-    qos->requests_received_count = 1;
-    qos->probes_received_count = 1;
-    qos->slots_full_discards_count = 1;
-    qos->data_replies_sent_count = 1;
-    qos->data_reply_bytes_sent = 1;
-    qos->probe_replies_sent_count = 1;
-  }
+        qos->requests_received_count = 1;
+        qos->probes_received_count = 1;
+        qos->slots_full_discards_count = 1;
+        qos->data_replies_sent_count = 1;
+        qos->data_reply_bytes_sent = 1;
+        qos->probe_replies_sent_count = 1;
+    }
 
-  return X_ERROR_SUCCESS;
+    return X_ERROR_SUCCESS;
 }
 DECLARE_XAM_EXPORT1(NetDll_XNetQosGetListenStats, kNetworking, kImplemented);
 
 dword_result_t XampXAuthStartup_entry(pointer_t<XAUTH_SETTINGS> setttings) {
-  return X_ERROR_SUCCESS;
+    return X_ERROR_SUCCESS;
 }
 DECLARE_XAM_EXPORT1(XampXAuthStartup, kNetworking, kStub);
 
+dword_result_t XampXAuthShutdown_entry(pointer_t<XAUTH_SETTINGS> setttings) {
+    return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XampXAuthShutdown, kNetworking, kStub);
+
 dword_result_t NetDll_XHttpStartup_entry(dword_t caller, dword_t reserved,
-                                         dword_t reserved_ptr) {
-  return TRUE;
+    dword_t reserved_ptr) {
+    return TRUE;
 }
 DECLARE_XAM_EXPORT1(NetDll_XHttpStartup, kNetworking, kStub);
 
-dword_result_t NetDll_XHttpDoWork_entry(dword_t caller, dword_t handle,
-                                        dword_t unk) {
-  XThread::SetLastError(0);
-  return 0;
+dword_result_t XamGetServiceEndpoint_entry(lpstring_t service_name,
+                                           lpstring_t service_endpoint,
+                                           dword_t service_endpoint_len,
+                                           dword_t overlapped) {
+  strncpy(service_endpoint, cvars::api_address.c_str(), service_endpoint_len);
+  return X_ERROR_SUCCESS;
 }
-DECLARE_XAM_EXPORT1(NetDll_XHttpDoWork, kNetworking, kStub);
+DECLARE_XAM_EXPORT1(XamGetServiceEndpoint, kNetworking, kStub);
 
-dword_result_t NetDll_XHttpOpenRequest_entry(
-    dword_t caller, dword_t connect_handle, lpstring_t verb, lpstring_t path,
-    lpstring_t version, lpstring_t referrer, lpstring_t reserved,
-    dword_t flag) {
-  XELOGI("OpenRequest: {} {}", verb ? verb : "", path ? path : "");
+dword_result_t XamBackgroundDownloadSetMode_entry(dword_t mode) {
+  XELOGI("XamBackgroundDownloadSetMode | Mode: {}", mode);
+  // 1) Active Mode: When the console is turned on and actively being used,
+  // downloads can proceed without restrictions.
+  //
+  // 2) Idle Mode: When the console is idle, it might continue downloading
+  // content but possibly at a reduced speed or with lower priority.
+  //
+  // 3) Low-Power State Mode: When the console is in a low-power state (similar
+  // to sleep mode), it may still download content if this mode is enabled,
+  // although this depends on the specific capabilities and settings of the
+  // console's firmware.
 
-  // Return invalid handle (not NULL)
   return 1;
 }
-DECLARE_XAM_EXPORT1(NetDll_XHttpOpenRequest, kNetworking, kStub);
+DECLARE_XAM_EXPORT1(XamBackgroundDownloadSetMode, kNetworking, kStub);
+
+dword_result_t NetDll_XHttpOpen_entry(dword_t caller, lpstring_t user_agent,
+                                      dword_t access_type,
+                                      lpstring_t proxy_name,
+                                      lpstring_t proxy_bypass, dword_t flags) {
+  userAgent = user_agent ? (std::string)user_agent : "Xenia";
+  // MUST be NULL or game will freeze or forever load.
+  return NULL;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpOpen, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpCrackUrl_entry(
+    dword_t caller, lpstring_t pcszUrl, dword_t dwUrlLength, dword_t flags,
+    pointer_t<URL_COMPONENTS> pUrlComponents) {
+  if (dwUrlLength < 1) {
+        return FALSE;
+  }
+  XELOGI("HttpCrackUrl {} {}", pcszUrl, dwUrlLength);
+  return TRUE;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpCrackUrl, kNetworking, kStub);
+
+dword_result_t NetDll_XHttpConnect_entry(dword_t caller, dword_t hSession,
+                                         lpstring_t host, dword_t port,
+                                         dword_t flags) {
+  if (hSession <= 1) {
+    hInternet = new HINTERNET(kernel_state());
+    hInternet->CreateSessionHandle(
+            hInternet->handle(), userAgent);
+
+    std::string hostname = "192.168.0.162";
+    uint16_t connectPort = uint16_t(port);
+    if (hostname.length() < 1) {
+      hostname = "127.0.0.1";
+    }
+    if (connectPort == 0) {
+      connectPort = 4135;  // Port 4135
+    }
+    XELOGI("HttpConnect: {} {} {} {}", hSession, hostname, connectPort, flags);
+
+    X_HANDLE hConnect = 
+        hInternet->CreateConnectionHandle(hInternet->handle(), hostname, port);
+
+    return hConnect;
+  }
+  return NULL;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpConnect, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpOpenRequest_entry(dword_t caller, dword_t hConnect,
+                                             lpstring_t verb, lpstring_t path,
+                                             lpstring_t version,
+                                             lpstring_t referrer,
+                                             lpstring_t reserved,
+                                             dword_t flag) {
+  std::string url = path ? (std::string)path : "";
+  std::string method = verb ? (std::string)verb : "";
+  XELOGI("HttpOpenRequest: {} {} {}", hConnect, method, url);
+  if (hConnect <= 1) {
+    return 1;
+  }
+  if (!hInternet) {
+    return 1;
+  }
+  X_HANDLE hRequest = hInternet->CreateRequestHandle(hInternet->handle(), url, method);
+  return hRequest;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpOpenRequest, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpCloseHandle_entry(dword_t caller, dword_t handle) {
+  XELOGI("HttpCloseHandle: {}", handle);
+  if (handle == 1) {
+    return FALSE;
+  }
+  if (!hInternet) {
+    return FALSE;
+  }
+  hInternet->ReleaseHandle();
+  hInternet = nullptr;
+  return TRUE;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpCloseHandle, kNetworking, kImplemented);
 
 dword_result_t NetDll_XHttpSetStatusCallback_entry(dword_t caller,
-                                                   dword_t handle,
-                                                   lpdword_t callback_ptr,
-                                                   dword_t flags, dword_t unk) {
-  return 1;
+                                                   dword_t hInternet,
+                                                   lpvoid_t callback_ptr,
+                                                   dword_t flags,
+                                                   dword_t unk) {
+
+  XELOGI("HttpSetStatusCallback: {}", hInternet);
+  return NULL;
 }
 DECLARE_XAM_EXPORT1(NetDll_XHttpSetStatusCallback, kNetworking, kStub);
 
-dword_result_t NetDll_XHttpSendRequest_entry(dword_t caller, dword_t hrequest,
+dword_result_t NetDll_XHttpSendRequest_entry(dword_t caller, dword_t handle,
                                              lpstring_t headers,
-                                             dword_t hlength, lpvoid_t unkn1,
-                                             dword_t unkn2, dword_t unk3,
+                                             dword_t hlength, lpvoid_t buf_ptr,
+                                             dword_t buf_len, dword_t flags,
                                              dword_t unk4) {
-  XELOGI("Headers {}", headers ? headers : "");
+  XELOGI("HttpSendRequest: Headers: {}", headers ? headers : "");
+  if (handle <= 1) {
+     return FALSE;
+  }
+  auto hInternet =
+      kernel_state()->object_table()->LookupObject<HINTERNET>(handle);
+  if (!hInternet) {
+     return FALSE;
+  }
+
+  if (hInternet->url().find("\\") != std::string::npos) {
+     return FALSE;
+  }
+  hInternet->SendRequest(hInternet->handle(),
+                         headers ? (std::string)headers : "", (uint8_t*)buf_ptr,
+                         buf_len, hInternet->method());
   return FALSE;
 }
-DECLARE_XAM_EXPORT1(NetDll_XHttpSendRequest, kNetworking, kStub);
+DECLARE_XAM_EXPORT1(NetDll_XHttpSendRequest, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpDoWork_entry(dword_t caller, dword_t hRequest,
+                                        dword_t unk) {
+  //XELOGI("HttpDoWork: handle: {}", hRequest);
+  return FALSE;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpDoWork, kNetworking, kStub);
 
 dword_result_t NetDll_inet_addr_entry(lpstring_t addr_ptr) {
   if (!addr_ptr) {
