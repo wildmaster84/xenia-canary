@@ -240,9 +240,10 @@ typedef struct {
 
 XNetStartupParams xnet_startup_params{};
 
-// To store the user_agent for requests
+// Should be changed
 std::string userAgent;
 HINTERNET* hInternet;
+uint32_t enableHttpOpen = 1;
 
 void Update_XNetStartupParams(XNetStartupParams& dest,
                               const XNetStartupParams& src) {
@@ -1283,7 +1284,13 @@ dword_result_t NetDll_XHttpOpen_entry(dword_t caller, lpstring_t user_agent,
                                       lpstring_t proxy_name,
                                       lpstring_t proxy_bypass, dword_t flags) {
   userAgent = user_agent ? (std::string)user_agent : "Xenia";
-  // MUST be NULL or game will freeze or forever load.
+
+
+  if (enableHttpOpen) {
+    hInternet = new HINTERNET(kernel_state());
+    hInternet->CreateSessionHandle(hInternet->handle(), userAgent);
+    return hInternet->handle();
+  }
   return NULL;
 }
 DECLARE_XAM_EXPORT1(NetDll_XHttpOpen, kNetworking, kImplemented);
@@ -1291,10 +1298,11 @@ DECLARE_XAM_EXPORT1(NetDll_XHttpOpen, kNetworking, kImplemented);
 dword_result_t NetDll_XHttpCrackUrl_entry(
     dword_t caller, lpstring_t pcszUrl, dword_t dwUrlLength, dword_t flags,
     pointer_t<URL_COMPONENTS> pUrlComponents) {
+  enableHttpOpen = 0;
   if (dwUrlLength < 1) {
         return FALSE;
   }
-  XELOGI("HttpCrackUrl {} {}", pcszUrl, dwUrlLength);
+  XELOGI("HttpCrackUrl {} {} {}", pcszUrl, dwUrlLength, flags);
   return TRUE;
 }
 DECLARE_XAM_EXPORT1(NetDll_XHttpCrackUrl, kNetworking, kStub);
@@ -1302,27 +1310,25 @@ DECLARE_XAM_EXPORT1(NetDll_XHttpCrackUrl, kNetworking, kStub);
 dword_result_t NetDll_XHttpConnect_entry(dword_t caller, dword_t hSession,
                                          lpstring_t host, dword_t port,
                                          dword_t flags) {
+  std::string hostname = "192.168.0.162";
+  uint16_t connectPort = uint16_t(port);
+  if (hostname.length() < 1) {
+        hostname = "127.0.0.1";
+  }
+  if (connectPort == 0) {
+        connectPort = 4135;  // Port 4135
+  }
+  XELOGI("HttpConnect: {} {} {} {}", hSession, hostname, connectPort, flags);
+
   if (hSession <= 1) {
     hInternet = new HINTERNET(kernel_state());
     hInternet->CreateSessionHandle(
             hInternet->handle(), userAgent);
-
-    std::string hostname = "192.168.0.162";
-    uint16_t connectPort = uint16_t(port);
-    if (hostname.length() < 1) {
-      hostname = "127.0.0.1";
-    }
-    if (connectPort == 0) {
-      connectPort = 4135;  // Port 4135
-    }
-    XELOGI("HttpConnect: {} {} {} {}", hSession, hostname, connectPort, flags);
-
-    X_HANDLE hConnect = 
-        hInternet->CreateConnectionHandle(hInternet->handle(), hostname, port);
-
-    return hConnect;
   }
-  return NULL;
+
+  X_HANDLE hConnect =
+      hInternet->CreateConnectionHandle(hInternet->handle(), hostname, port);
+  return hConnect;
 }
 DECLARE_XAM_EXPORT1(NetDll_XHttpConnect, kNetworking, kImplemented);
 
