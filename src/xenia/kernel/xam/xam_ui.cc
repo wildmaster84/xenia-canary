@@ -965,6 +965,12 @@ static dword_result_t XamShowMessageBoxUi(
   return result;
 }
 
+dword_result_t XamDoesOmniNeedConfiguration_entry() { return 0; }
+DECLARE_XAM_EXPORT1(XamDoesOmniNeedConfiguration, kMisc, kStub);
+
+dword_result_t XamFirstRunExperienceShouldRun_entry() { return 0; }
+DECLARE_XAM_EXPORT1(XamFirstRunExperienceShouldRun, kMisc, kStub);
+
 // https://www.se7ensins.com/forums/threads/working-xshowmessageboxui.844116/
 dword_result_t XamShowMessageBoxUI_entry(
     dword_t user_index, lpu16string_t title_ptr, lpu16string_t text_ptr,
@@ -988,6 +994,18 @@ dword_result_t XamShowMessageBoxUIEx_entry(
                              overlapped);
 }
 DECLARE_XAM_EXPORT1(XamShowMessageBoxUIEx, kUI, kImplemented);
+
+dword_result_t XNotifyBroadcast_entry(dword_t notification, dword_t data,
+                                      dword_t unk) {
+  XNotificationID id = notification;
+  if (!id) {
+    XELOGI("XNotifyBroadcast: New ID {:08x}", notification.value());
+  }
+  kernel_state()->BroadcastNotification(notification, data);
+
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XNotifyBroadcast, kUI, kStub);
 
 dword_result_t XNotifyQueueUI_entry(dword_t exnq, dword_t dwUserIndex,
                                     qword_t qwAreas,

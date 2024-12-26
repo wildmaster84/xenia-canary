@@ -859,6 +859,17 @@ dword_result_t XeKeysHmacShaUsingKey_entry(lpvoid_t obscured_key,
 }
 DECLARE_XBOXKRNL_EXPORT1(XeKeysHmacShaUsingKey, kNone, kImplemented);
 
+dword_result_t XeKeysGetConsoleID_entry(lpvoid_t raw_bytes,
+                                        lpstring_t hex_string) {
+  // We dont care about KV or using official keys
+  if (hex_string) {
+    std::string key = "245149100000\0\0";
+    strncpy(hex_string, key.c_str(), key.length());
+  }
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(XeKeysGetConsoleID, kNone, kImplemented);
+
 // going off of usage in some hbrew xex
 // 0 and 1 appear to be devkit, 2 is retail
 // we default to saying we're retail
@@ -866,7 +877,6 @@ dword_result_t XeKeysGetConsoleType_entry(lpdword_t type_out) {
   *type_out = 2;
   return 0;
 }
-
 DECLARE_XBOXKRNL_EXPORT1(XeKeysGetConsoleType, kNone, kImplemented);
 
 }  // namespace xboxkrnl

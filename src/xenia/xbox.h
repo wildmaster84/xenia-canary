@@ -142,6 +142,13 @@ typedef uint32_t X_HRESULT;
 #define X_UI_FLAGS_LOCALSIGNIN          0x00000001
 #define X_UI_FLAGS_ONLINEENABLED        0x00000002
 
+#define X_USER_LOGON_SIGNOUT        0x23
+#define X_USER_LOGON_SIGNOUT_2      0x48    // Blades
+#define X_USER_LOGON_SIGNOUT_3      0x13    // Testing Network
+#define X_USER_LOGON_SIGNIN         0x424
+#define X_USER_LOGON_SIGNIN_2       0x25    // NXE
+#define X_USER_LOGON_SIGNIN_3       0x14    // Blades OOBE profile creation
+
 //IOCTL_, used by NtDeviceIoControlFile
 constexpr uint32_t X_IOCTL_DISK_GET_DRIVE_GEOMETRY = 0x70000;
 constexpr uint32_t X_IOCTL_DISK_GET_PARTITION_INFO = 0x74004;
@@ -312,6 +319,7 @@ enum : XNotificationID {
   kXNotificationIDSystemAudioLatencyChanged = 0x0000001E,
   kXNotificationIDSystemNUIChatBindingChanged = 0x0000001F,
   kXNotificationIDSystemInputActivityChanged = 0x00000020,
+  kXNotificationIDSystemPXLiveSystemUpdate = 0x00000016,
 
   // XNotification Live
   kXNotificationIDLiveConnectionChanged = 0x02000001,
@@ -335,9 +343,25 @@ enum : XNotificationID {
   kNotificationXmpStateChanged = 0x0A000001,
   kNotificationXmpPlaybackBehaviorChanged = 0x0A000002,
   kNotificationXmpPlaybackControllerChanged = 0x0A000003,
+  kNotificationIDXmpUnknown = 0x0A00000C,
 
   // XNotification Party
   kXNotificationIDPartyMembersChanged = 0x0E000002,
+  kXNotificationIDFriendUnknown = 0x0E000005,
+
+  // XNotification Msgr
+  kXNotificationIDMsgrUnknown = 0x0C00000E,
+
+  // XNotification DVD Drive
+  kXNotificationTrayStateChanged = 0x8000000D,
+  kXNotificationTrayStateClosed = 0,
+  kXNotificationTrayStateClosing = 1,
+  kXNotificationTrayStateOpen = 2,
+  kXNotificationTrayStateOpening = 3,
+  kXNotificationTrayStateReading = 4,
+  kXNotificationIDDvdDriveUnknown = 0x80000003,
+  kXNotificationDvdDriveTrayStateChanged = 0x8000000D,
+
 };
 
 // https://github.com/CodeAsm/ffplay360/blob/master/Common/XTLOnPC.h

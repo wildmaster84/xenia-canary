@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include <xenia/kernel/xam/xam_info.cc>
 #include "xenia/base/logging.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
@@ -16,6 +17,14 @@
 namespace xe {
 namespace kernel {
 namespace xboxkrnl {
+
+void HalOpenCloseODDTray_entry(dword_t open_close) {
+  xam::SetTrayState(open_close ? 2 : 0);
+}
+DECLARE_XBOXKRNL_EXPORT1(HalOpenCloseODDTray, kNone, kStub);
+
+void HalSendSMCMessage_entry(lpvoid_t msg, lpvoid_t resp) {}
+DECLARE_XBOXKRNL_EXPORT2(HalSendSMCMessage, kNone, kStub, kImportant);
 
 void HalReturnToFirmware_entry(dword_t routine) {
   // void
