@@ -15,6 +15,17 @@
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/xbox.h"
 
+DEFINE_uint32(
+    audio_flag, 65536,
+    "Audio Mode.\n"
+    "          1 = Digital Stereo \n"
+    "          2 = Analog Mono (defaults to stereo in versions beyond blades)\n"
+    "          3 = Stereo Bypass (?) \n"
+    "      65536 = Dolby Digital\n"
+    "     131072 = WMA PRO\n"
+    " 2147483648 = Low Latency (?) Defaults to digital stereo \n",
+    "XConfig");
+
 DEFINE_int32(user_language, 1,
              "User language ID.\n"
              "  1=en  2=ja  3=de  4=fr  5=es  6=it  7=ko  8=zh\n"
@@ -45,6 +56,7 @@ X_STATUS xeExGetXConfigSetting(uint16_t category, uint16_t setting,
                                void* buffer, uint16_t buffer_size,
                                uint16_t* required_size) {
   uint16_t setting_size = 0;
+  uint32_t retail_flags = 0;
   alignas(uint32_t) uint8_t value[4];
 
   // TODO(benvanik): have real structs here that just get copied from.
@@ -85,18 +97,286 @@ X_STATUS xeExGetXConfigSetting(uint16_t category, uint16_t setting,
           setting_size = 4;
           xe::store_and_swap<uint32_t>(value, 0x00040000);
           break;
+        case 0x000B:  // XCONFIG_USER_AUDIO_FLAGS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, cvars::audio_flag);
+          break;
         case 0x000C:  // XCONFIG_USER_RETAIL_FLAGS
           setting_size = 4;
-          // TODO(benvanik): get this value.
-          xe::store_and_swap<uint32_t>(value, 0);
+          retail_flags |= 0x02;  // DST off
+          retail_flags |= 0x04;  // network initialized?
+          // flags |= 0x08;  // 24-hour clock
+          retail_flags |= 0x40;  // dashboard initial setup complete
+          // retail_flags |= 0x00000800; // Start on IPTV, maybe swap to start
+          // up option
+          retail_flags |= 0x00001000;  // Enable IPTV UI
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, retail_flags);
+          break;
+        case 0x000D:  // XCONFIG_USER_DEVKIT_FLAGS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0x00);
           break;
         case 0x000E:  // XCONFIG_USER_COUNTRY
           setting_size = 1;
           value[0] = static_cast<uint8_t>(cvars::user_country);
           break;
-        case 0x000F:  // XCONFIG_USER_PC_FLAGS (Parental Control Flags)
+        case 0x000F:  // XCONFIG_USER_PC_FLAGS (parental control?)
           setting_size = 1;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case 0x0010:  // XCONFIG_USER_SMB_CONFIG (0x100 byte string)
+                      // Just set the start of the buffer to 0 so that callers
+                      // don't error from an un-inited buffer
+          setting_size = 256;
+          xe::store_and_swap<uint64_t>(value, 0);  // value[0]?
+          break;
+        case 0x0011:  // XCONFIG_USER_LIVE_PUID
+          setting_size = 8;
+          xe::store_and_swap<uint64_t>(value, 0x0009E2329D404916);  // value[0]?
+          break;
+        case 0x0013:  // XCONFIG_USER_AV_COMPOSITE_SCREENSZ
+                      // setting_size = 4;
+                      // xe::store_and_swap<uint16_t>(value, 0); // value[0]?
+                      // break;
+        case 0x0014:  // XCONFIG_USER_AV_COMPONENT_SCREENSZ
+                      // setting_size = 4;
+                      // xe::store_and_swap<uint16_t>(value, 0); // value[0]?
+                      // break;
+        case 0x0015:  // XCONFIG_USER_AV_VGA_SCREENSZ
+                      // setting_size = 4;
+                      // xe::store_and_swap<uint16_t>(value, 0); // value[0]?
+                      // break;
+        case 0x0016:  // XCONFIG_USER_PC_GAME
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0017:  // XCONFIG_USER_PC_PASSWORD
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0018:  // XCONFIG_USER_PC_MOVIE
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0019:  // XCONFIG_USER_PC_GAME_RATING
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x001A:  // XCONFIG_USER_PC_MOVIE_RATING
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x001B:  // XCONFIG_USER_PC_HINT
+          setting_size = 1;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x001C:  // XCONFIG_USER_PC_HINT_ANSWER
+          setting_size = 32;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x001D:  // XCONFIG_USER_PC_OVERRIDE
+          setting_size = 32;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x001E:  // XCONFIG_USER_MUSIC_PLAYBACK_MODE
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x001F:  // XCONFIG_USER_MUSIC_VOLUME
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0020:  // XCONFIG_USER_MUSIC_FLAGS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0021:  // XCONFIG_USER_ARCADE_FLAGS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0022:  // XCONFIG_USER_PC_VERSION
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0023:  // XCONFIG_USER_PC_TV
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0024:  // XCONFIG_USER_PC_TV_RATING
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0025:  // XCONFIG_USER_PC_EXPLICIT_VIDEO
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0026:  // XCONFIG_USER_PC_EXPLICIT_VIDEO_RATING
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0027:  // XCONFIG_USER_PC_UNRATED_VIDEO
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0028:  // XCONFIG_USER_PC_UNRATED_VIDEO_RATING
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x0029:  // XCONFIG_USER_VIDEO_OUTPUT_BLACK_LEVELS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x002A:  // XCONFIG_USER_VIDEO_PLAYER_DISPLAY_MODE
+          setting_size = 1;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case 0x002B:  // ALTERNATE_VIDEO_TIMING_ID
+          setting_size = 1;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x002C:  // XCONFIG_USER_VIDEO_DRIVER_OPTIONS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x002D:  // XCONFIG_USER_MUSIC_UI_FLAGS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+        case 0x002E:  // XCONFIG_USER_VIDEO_MEDIA_SOURCE_TYPE
+          setting_size = 1;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x002F:  // XCONFIG_USER_MUSIC_MEDIA_SOURCE_TYPE
+          setting_size = 1;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x0030:  // XCONFIG_USER_PHOTO_MEDIA_SOURCE_TYPE
+          setting_size = 1;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        default:
+          assert_unhandled_case(setting);
+          return X_STATUS_INVALID_PARAMETER_2;
+      }
+      break;
+    case 0x0006:
+      // XCONFIG_MEDIA_CENTER_CATEGORY
+      switch (setting) {
+        case 0x0001:  // XCONFIG_MEDIA_CENTER_MEDIA_PLAYER
+          setting_size = 10;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x0002:  // XCONFIG_MEDIA_CENTER_XESLED_VERSION
+          setting_size = 10;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case 0x0003:  // XCONFIG_MEDIA_CENTER_XESLED_TRUST_SECRET
+          setting_size = 20;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case 0x0004:  // XCONFIG_MEDIA_CENTER_XESLED_TRUST_CODE
+          setting_size = 5;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case 0x0005:  // XCONFIG_MEDIA_CENTER_XESLED_HOST_ID
+          setting_size = 20;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case 0x0006:  // XCONFIG_MEDIA_CENTER_XESLED_KEY
+          setting_size = 1628;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case 0x0007:  // XCONFIG_MEDIA_CENTER_XESLED_HOST_MAC_ADDRESS
+          setting_size = 6;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case 0x0008:  // XCONFIG_MEDIA_CENTER_SERVER_UUID
+          setting_size = 16;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x0009:  // XCONFIG_MEDIA_CENTER_SERVER_NAME
+          setting_size = 128;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x000A:  // XCONFIG_MEDIA_CENTER_SERVER_FLAG
+          setting_size = 4;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        default:
+          assert_unhandled_case(setting);
+          return X_STATUS_INVALID_PARAMETER_2;
+      }
+      break;
+    case 0x0007:
+      // XCONFIG_CONSOLE_SETTINGS
+      switch (setting) {
+        case 0x0001:  // XCONFIG_CONSOLE_SCREENSAVER
+          setting_size = 2;
+          xe::store_and_swap<int16_t>(value, 0);
+          break;
+        case 0x0002:  // XCONFIG_CONSOLE_AUTO_SHUTDOWN
+          setting_size = 2;
+          xe::store_and_swap<int16_t>(value, 0);
+          break;
+        case 0x0003:  // XCONFIG_CONSOLE_WIRELESS_SETTINGS
+          setting_size = 256;
           xe::store_and_swap<uint8_t>(value, 0);
+          break;
+        case 0x0004:  // XCONFIG_CONSOLE_CAMERA_SETTINGS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);
+          break;
+        case 0x0005:  // XCONFIG_CONSOLE_PLAYTIMERDATA
+          setting_size = 20;
+          xe::store_and_swap<int64_t>(value, 0);
+          break;
+        case 0x0006:  // XCONFIG_CONSOLE_MEDIA_DISABLEAUTOLAUNCH
+          setting_size = 2;
+          xe::store_and_swap<int16_t>(value, 0);
+          break;
+        case 0x0007:  // XCONFIG_CONSOLE_KEYBOARD_LAYOUT
+          setting_size = 2;
+          xe::store_and_swap<int16_t>(value, 0);
+          break;
+        case 0x0008:  // XCONFIG_CONSOLE_PC_TITLE_EXEMPTIONS
+                      // setting_size = 64;
+                      // xe::store_and_swap<int16_t>(value, 0); ?
+                      // break;
+        case 0x0009:  //  XCONFIG_CONSOLE_NUI
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);
+          break;
+        case 0x000A:  //  XCONFIG_CONSOLE_VOICE
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);
+          break;
+        case 0x000B:  //  XCONFIG_CONSOLE_RETAIL_EX_FLAGS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);
+          break;
+        default:
+          assert_unhandled_case(setting);
+          return X_STATUS_INVALID_PARAMETER_2;
+      }
+      break;
+    case 0x0009:
+      switch (setting) {
+        case 0x0001:  // XCONFIG_IPTV_SERVICE_PROVIDER_NAME
+          setting_size = 120;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x0002:  // XCONFIG_IPTV_PROVISIONING_SERVER_URL
+          setting_size = 128;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x0003:  // XCONFIG_IPTV_SUPPORT_INFO
+          setting_size = 128;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case 0x0004:  // XCONFIG_IPTV_BOOTSTRAP_SERVER_URL
+          setting_size = 128;
+          value[0] = static_cast<uint8_t>(0);
           break;
         default:
           assert_unhandled_case(setting);

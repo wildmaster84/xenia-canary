@@ -105,6 +105,13 @@ UserProfile::UserProfile(uint64_t xuid, X_XAMACCOUNTINFO* account_info)
   AddSetting(std::make_unique<UserSetting>(0x63E83FFE, std::vector<uint8_t>()));
   // XPROFILE_TITLE_SPECIFIC3
   AddSetting(std::make_unique<UserSetting>(0x63E83FFD, std::vector<uint8_t>()));
+
+  // XPROFILE_AVATAR_INFO
+  AddSetting(std::make_unique<UserSetting>(0x63E80044, 0));
+  // XPROFILE_LAST_LIVE_SIGNIN
+  AddSetting(std::make_unique<UserSetting>(0x7008004F, 0));
+  // XPROFILE_UNK_61180050
+  AddSetting(std::make_unique<UserSetting>(0x61180050, 0));
 }
 
 X_ONLINE_FRIEND UserProfile::GenerateDummyFriend() {

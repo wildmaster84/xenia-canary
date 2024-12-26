@@ -298,6 +298,20 @@ object_ref<XThread> KernelState::LaunchModule(object_ref<UserModule> module) {
   if (!module->is_executable()) {
     return nullptr;
   }
+  uint32_t start_address;
+  uint32_t start_context;
+  // TODO(gibbed): terrible hack
+  if (module->name() == "bootanim" || module->name() == "$flash_bootanim") {
+    start_address = module->GetProcAddressByOrdinal(1);  // PlayBootAnimation
+    start_context = module->hmodule_ptr();
+  } else {
+    start_address = module->entry_point();
+    start_context = 0;
+  }
+  if (!start_address) {
+    XELOGW("KernelState: Wanted to launch module, but has no start address!");
+    return nullptr;
+  }
 
   SetExecutableModule(module);
   XELOGI("KernelState: Launching module...");
@@ -305,8 +319,8 @@ object_ref<XThread> KernelState::LaunchModule(object_ref<UserModule> module) {
   // Create a thread to run in.
   // We start suspended so we can run the debugger prep.
   auto thread = object_ref<XThread>(
-      new XThread(kernel_state(), module->stack_size(), 0,
-                  module->entry_point(), 0, X_CREATE_SUSPENDED, true, true));
+      new XThread(kernel_state(), module->stack_size(), 0, start_address,
+                  start_context, X_CREATE_SUSPENDED, true, true));
 
   // We know this is the 'main thread'.
   thread->set_name("Main XThread");
@@ -886,6 +900,12 @@ void KernelState::RegisterNotifyListener(XNotifyListener* listener) {
     // XN_SYS_SIGNINCHANGED x2
     listener->EnqueueNotification(kXNotificationIDSystemSignInChanged, 1);
     listener->EnqueueNotification(kXNotificationIDSystemSignInChanged, 1);
+
+    // listener->EnqueueNotification(kxNotificationTrayStateClosed, 1);
+    listener->EnqueueNotification(kXNotificationIDSystemStorageDevicesChanged,
+                                  0);
+    listener->EnqueueNotification(kXNotificationIDSystemStorageDevicesChanged,
+                                  1);
   }
 
   // LIVE

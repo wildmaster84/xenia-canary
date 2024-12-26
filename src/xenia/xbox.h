@@ -141,6 +141,13 @@ typedef uint32_t X_HRESULT;
 #define X_UI_FLAGS_LOCALSIGNIN          0x00000001
 #define X_UI_FLAGS_ONLINEENABLED        0x00000002
 
+#define X_USER_LOGON_SIGNOUT        0x23
+#define X_USER_LOGON_SIGNOUT_2      0x48    // Blades
+#define X_USER_LOGON_SIGNOUT_3      0x13    // Testing Network
+#define X_USER_LOGON_SIGNIN         0x424
+#define X_USER_LOGON_SIGNIN_2       0x25    // NXE
+#define X_USER_LOGON_SIGNIN_3       0x14    // Blades OOBE profile creation
+
 //IOCTL_, used by NtDeviceIoControlFile
 constexpr uint32_t X_IOCTL_DISK_GET_DRIVE_GEOMETRY = 0x70000;
 constexpr uint32_t X_IOCTL_DISK_GET_PARTITION_INFO = 0x74004;
