@@ -504,6 +504,7 @@ int XSocket::Send(const uint8_t* buf, uint32_t buf_len, uint32_t flags) {
 
 int XSocket::SendTo(uint8_t* buf, uint32_t buf_len, uint32_t flags,
                     XSOCKADDR_IN* to, uint32_t to_len) {
+  if (!XLiveAPI::upnp_handler) return 0;
   to->address_port =
       XLiveAPI::upnp_handler->GetMappedBindPort(to->address_port);
 
