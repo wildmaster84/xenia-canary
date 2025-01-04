@@ -489,19 +489,29 @@ dword_result_t NetDll_WSASendTo_entry(
                 buffers[i].len);
     combined_buffer_offset += buffers[i].len;
   }
+  // We create an instance of this thread to set the last error
+  XThread* thread = XThread::GetCurrentThread();
 
   if (overlapped) {
     // little hacky, create a thread so it can instanly complete while is still
     // sending data
-    std::thread([socket, combined_buffer = std::move(combined_buffer_mem),
+    std::thread([socket, thread,
+                 combined_buffer = std::move(combined_buffer_mem),
                  combined_buffer_size, flags, to_ptr, to_len, overlapped,
                  num_bytes_sent]() mutable {
       const int result = socket->SendTo(
           combined_buffer.data(), combined_buffer_size, flags, to_ptr, to_len);
 
+      XELOGI("NetDll_WSASendTo: Send {} bytes to: {}.{}.{}.{}", result,
+             to_ptr->address_ip.S_un.S_un_b.s_b1,
+             to_ptr->address_ip.S_un.S_un_b.s_b2,
+             to_ptr->address_ip.S_un.S_un_b.s_b3,
+             to_ptr->address_ip.S_un.S_un_b.s_b4);
+
       if (result == -1) {
-        XThread::SetLastError(socket->GetLastWSAError());
-        overlapped->internal = SOCKET_ERROR;
+        thread->set_last_error(socket->GetLastWSAError());
+        overlapped->internal = 0;
+        XELOGI("Packet failed: {}", result);
       } else {
         overlapped->internal = result;
 
@@ -526,9 +536,9 @@ dword_result_t NetDll_WSASendTo_entry(
       combined_buffer_mem.data(), combined_buffer_size, flags, to_ptr, to_len);
 
   if (result == -1) {
-    XThread::SetLastError(socket->GetLastWSAError());
+    thread->set_last_error(socket->GetLastWSAError());
     return result;
-  } else if (result != -1 && to_ptr && !cvars::log_mask_ips) {
+  } else if (result != -1 && to_ptr) {
     XELOGI("NetDll_WSASendTo: Send {} bytes to: {}.{}.{}.{}", result,
            to_ptr->address_ip.S_un.S_un_b.s_b1,
            to_ptr->address_ip.S_un.S_un_b.s_b2,
