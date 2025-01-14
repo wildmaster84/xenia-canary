@@ -44,7 +44,8 @@ class HttpAchievementBackend : public AchievementBackendInterface {
   AchievementGpdStructure* GetAchievementInfoInternal(
       const uint64_t xuid, const uint32_t title_id,
       const uint32_t achievement_id) const;
-  std::string SendRequest(const std::string host) const;
+  std::string SendRequest(const std::string host,
+                          const std::string option) const;
 
   bool SaveAchievementsData(const uint64_t xuid,
                             const uint32_t title_id) override {

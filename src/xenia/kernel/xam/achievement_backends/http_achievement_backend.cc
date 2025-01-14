@@ -66,8 +66,16 @@ AchievementGpdStructure* HttpAchievementBackend::GetAchievementInfoInternal(
   return user->GetAchievement(title_id, achievement_id);
 }
 
-std::string HttpAchievementBackend::SendRequest(const std::string host) const {
+std::string HttpAchievementBackend::SendRequest(
+    const std::string host, const std::string option) const {
   XELOGI("url: {}", host);
+  CURLoption type;
+  if (option == "POST") {
+    type = CURLOPT_HTTPPOST;
+  } else {
+    type = CURLOPT_HTTPGET;
+  }
+
   if (host.empty()) return "";
   std::string url =
       fmt::format("{}/{}", cvars::default_achievements_backend_url, host);
@@ -82,6 +90,12 @@ std::string HttpAchievementBackend::SendRequest(const std::string host) const {
   std::string response_body;
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+  curl_easy_setopt(curl, type, 5L);
+  if (option == "POST") {
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, 0);
+  }
+
   curl_easy_setopt(curl, CURLOPT_USERAGENT, agent.c_str());
   curl_easy_setopt(
       curl, CURLOPT_WRITEFUNCTION,
@@ -126,7 +140,7 @@ bool HttpAchievementBackend::IsAchievementUnlocked(
   std::string host = fmt::format("{}/{:016X}/{:08X}", "api/achievements",
                                  user->GetLogonXUID(), title_id);
 
-  std::string response_body = SendRequest(host);
+  std::string response_body = SendRequest(host, "GET");
 
   rapidjson::Document doc;
   if (doc.Parse(response_body.c_str()).HasParseError()) {
@@ -186,7 +200,7 @@ bool HttpAchievementBackend::LoadAchievementsData(
   std::string host =
       fmt::format("{}/{:016X}/{:08X}", "api/achievements", user->GetLogonXUID(),
                   static_cast<uint32_t>(title_id));
-  std::string response_body = SendRequest(host);
+  std::string response_body = SendRequest(host, "GET");
 
   rapidjson::Document doc;
   if (doc.Parse(response_body.c_str()).HasParseError()) {
@@ -231,10 +245,10 @@ bool HttpAchievementBackend::SaveAchievementData(
     const uint32_t achievement_id) {
   const auto user = kernel_state()->xam_state()->GetUserProfile(xuid);
   std::string host =
-      fmt::format("{}/{:016X}/{:08X}/{}", "api/add_achievement",
+      fmt::format("{}/{:016X}/{:08X}/{}", "api/achievements",
                   user->GetLogonXUID(), title_id, achievement_id);
 
-  std::string response_body = SendRequest(host);
+  std::string response_body = SendRequest(host, "POST");
 
   rapidjson::Document doc;
   if (doc.Parse(response_body.c_str()).HasParseError()) {
