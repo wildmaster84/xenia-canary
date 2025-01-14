@@ -195,6 +195,7 @@ bool ProfileManager::LoadAccount(const uint64_t xuid) {
   MountProfile(xuid);
 
   const std::string guest_path = xuid_as_string + ":\\Account";
+  XELOGI("{}", guest_path);
 
   xe::vfs::File* output_file;
   xe::vfs::FileAction action = {};
@@ -265,9 +266,12 @@ void ProfileManager::ModifyGamertag(const uint64_t xuid, std::string gamertag) {
   DismountProfile(xuid);
 }
 
-bool ProfileManager::MountProfile(const uint64_t xuid) {
+bool ProfileManager::MountProfile(const uint64_t xuid, std::string mount_path) {
   std::filesystem::path profile_path = GetProfilePath(xuid);
-  std::string mount_path = fmt::format("{:016X}", xuid) + ':';
+  if (mount_path.empty()) {
+    mount_path = fmt::format("{:016X}", xuid);
+  }
+  mount_path += ':';
 
   auto device =
       std::make_unique<vfs::HostPathDevice>(mount_path, profile_path, false);
