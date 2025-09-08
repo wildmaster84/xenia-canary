@@ -123,7 +123,8 @@ class XObject {
     SymbolicLink,
     Thread,
     Timer,
-    Device
+    Device,
+    Internet
   };
 
   static bool HasDispatcherHeader(Type type) {

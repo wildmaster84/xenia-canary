@@ -10,6 +10,7 @@
 #include <random>
 
 #include "xenia/base/logging.h"
+#include "xenia/cpu/processor.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_module.h"
@@ -22,6 +23,8 @@
 #include "xenia/kernel/xsocket.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
+
+#include "xenia/kernel/hinternet.h"
 
 #ifdef XE_PLATFORM_WIN32
 // NOTE: must be included last as it expects windows.h to already be included.
@@ -1348,12 +1351,72 @@ dword_result_t NetDll_XHttpStartup_entry(dword_t caller, dword_t reserved,
   // 584111F7 - Prevents Minecraft from loading
   // We're suppose to set error code if we fail function
   // XThread::SetLastError(XHTTP_ERROR_CONNECTION_ERROR);
-  return 0;
+  return 1;
 }
 DECLARE_XAM_EXPORT1(NetDll_XHttpStartup, kNetworking, kStub);
 
 void NetDll_XHttpShutdown_entry(dword_t caller) {}
 DECLARE_XAM_EXPORT1(NetDll_XHttpShutdown, kNetworking, kStub);
+
+dword_result_t XamGetServiceEndpoint_entry(lpstring_t service_name,
+                                           lpstring_t service_endpoint,
+                                           dword_t service_endpoint_len,
+                                           dword_t overlapped) {
+  std::string name = "";
+  std::string url = "";
+  if (service_name) name = service_name;
+  if (service_endpoint) url = service_endpoint;
+
+  XELOGI("XamGetServiceEndpoint: endpoint: {}, url: {}", name, url);
+  strncpy(service_endpoint, XLiveAPI::GetApiAddress().c_str(),
+          service_endpoint_len);
+
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamGetServiceEndpoint, kNetworking, kStub);
+
+dword_result_t NetDll_XHttpOpen_entry(dword_t caller, lpstring_t user_agent,
+                                      dword_t access_type,
+                                      lpstring_t proxy_name,
+                                      lpstring_t proxy_bypass, dword_t flags) {
+  HINTERNET* hinternet = new HINTERNET(kernel_state());
+
+  std::string agent = "Xenia";
+  if (user_agent) agent = user_agent;
+
+  hinternet->SetUserAgent(agent);
+  return hinternet->handle();
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpOpen, kNetworking, kStub);
+
+dword_result_t NetDll_XHttpConnect_entry(dword_t caller, dword_t handle,
+                                         lpstring_t host, dword_t port,
+                                         dword_t flags) {
+  std::string hostname = "127.0.0.1";
+  uint16_t connectPort = 8080;
+
+  auto hInternet =
+      kernel_state()->object_table()->LookupObject<HINTERNET>(handle);
+
+  if (!hInternet) {
+    XThread::SetLastError(XHTTP_ERROR_NOT_INITIALIZED);
+    return 1;
+  }
+
+  XELOGI("HttpConnect: {:08x} {} {}", static_cast<uint32_t>(handle), hostname,
+         connectPort);
+  hInternet->SetHost(hostname, connectPort);
+
+  bool status = hInternet->Connect();
+  if (!status) {
+    XThread::SetLastError(XHTTP_ERROR_CONNECTION_ERROR);
+    XELOGI("HttpConnect: Failed to connect to host: {}:{}",
+           hInternet->server_name(), hInternet->port());
+    return 1;
+  }
+  return hInternet->handle();
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpConnect, kNetworking, kStub);
 
 dword_result_t NetDll_XHttpDoWork_entry(dword_t caller, dword_t handle,
                                         dword_t unk) {
@@ -1367,21 +1430,38 @@ dword_result_t NetDll_XHttpOpenRequest_entry(
     dword_t caller, dword_t connect_handle, lpstring_t verb, lpstring_t path,
     lpstring_t version, lpstring_t referrer, lpstring_t reserved,
     dword_t flag) {
-  std::string http_verb = "";
-  std::string object_name = "";
+  std::string http_verb = "GET";
+  std::string http_path = "/";
+  std::string http_version = "HTTP/1.0";
+  std::string http_referrer = "";
+  std::string http_reserved = "";
 
-  if (verb) {
-    http_verb = verb;
+  if (verb) http_verb = verb;
+  if (path) http_path = path;
+  if (version) http_version = version;
+  if (referrer) http_referrer = referrer;
+  if (reserved) http_reserved = reserved;
+
+  XELOGI(
+      "OpenRequest: handle: {}, verb: {}, path: {}, version: {}, referrer: {}, "
+      "reserved: {}",
+      connect_handle.value(), http_verb, http_path, http_version, http_referrer,
+      http_reserved);
+  if (connect_handle.value() == 0) {
+    XThread::SetLastError(XHTTP_ERROR_NOT_INITIALIZED);
+    return 1;
   }
 
-  if (path) {
-    object_name = path;
+  auto hInternet =
+      kernel_state()->object_table()->LookupObject<HINTERNET>(connect_handle);
+
+  if (!hInternet) {
+    XThread::SetLastError(XHTTP_ERROR_NOT_INITIALIZED);
+    return 1;
   }
+  hInternet->SetRequest(http_path, http_verb, http_version);
 
-  XELOGI("OpenRequest: {} {}", http_verb, object_name);
-
-  // Return invalid handle (not NULL)
-  return 1;
+  return hInternet->handle();
 }
 DECLARE_XAM_EXPORT1(NetDll_XHttpOpenRequest, kNetworking, kStub);
 
@@ -1389,33 +1469,67 @@ dword_result_t NetDll_XHttpSetStatusCallback_entry(dword_t caller,
                                                    dword_t handle,
                                                    lpdword_t callback_ptr,
                                                    dword_t flags, dword_t unk) {
+  XELOGI("NetDll_XHttpSetStatusCallback");
   return 1;
 }
 DECLARE_XAM_EXPORT1(NetDll_XHttpSetStatusCallback, kNetworking, kStub);
 
 dword_result_t NetDll_XHttpSendRequest_entry(dword_t caller, dword_t hrequest,
                                              lpstring_t headers,
-                                             dword_t hlength, lpvoid_t unkn1,
-                                             dword_t unkn2, dword_t unk3,
-                                             dword_t unk4) {
-  std::string request_headers = "";
+                                             dword_t hlength, lpvoid_t buf_ptr,
+                                             dword_t buf_len,
+                                             dword_t caller_ptr) {
+  std::string request_headers = "\r\nContent-Type: application/text\r\n";
 
   if (headers) {
     request_headers = headers;
   }
 
   XELOGI("Headers {}", request_headers);
+
+  auto hInternet =
+      kernel_state()->object_table()->LookupObject<HINTERNET>(hrequest);
+
+  if (!hInternet) {
+    XThread::SetLastError(XHTTP_ERROR_NOT_INITIALIZED);
+    return false;
+  }
+
+  std::string request = "";
+
+  request.append(hInternet->getMethod() + " " + hInternet->getPath() + " " +
+                 hInternet->getVersion() + "\r\n");
+  request.append("Host: " + hInternet->getHost() + "\r\n");
+  request.append("User-Agent: " + hInternet->getUserAgent() + "\r\n");
+  request.append(request_headers + "\r\n");
+  request.append("\r\n");
+
+  // Append body (if any)
+  if (buf_len.value() > 0 && buf_ptr) {
+    auto memory = kernel_state()->memory();
+    const char* data_ptr =
+        memory->TranslateVirtual<const char*>(buf_ptr.guest_address());
+    request.append(data_ptr, buf_len.value());
+  }
+  // Minecraft does not like receiving empty buffers.
+  // else {
+  //  XELOGI("hInternet: buffer is empty.");
+  //  XThread::SetLastError(0);
+  //  return false;
+  //}
+
+  hInternet->SendRequest(request_headers, request);
+
+  if (hInternet->getLastError() == 0) {
+    XELOGI("HttpSendRequest: size: {}", buf_len.value());
+    XELOGI("request: {}", request);
+    return true;
+  }
+  XELOGI("hInternet: error: {}", hInternet->getLastError());
+  XThread::SetLastError(hInternet->getLastError());
   return false;
 }
 DECLARE_XAM_EXPORT1(NetDll_XHttpSendRequest, kNetworking, kStub);
-
-dword_result_t NetDll_XHttpConnect_entry(dword_t caller, dword_t hSession,
-                                         lpstring_t host, dword_t port,
-                                         dword_t flags) {
-  // XThread::SetLastError(XHTTP_ERROR_CONNECTION_ERROR);
-  return 0;
-}
-DECLARE_XAM_EXPORT1(NetDll_XHttpConnect, kNetworking, kStub);
 
 dword_result_t NetDll_inet_addr_entry(lpstring_t addr_ptr) {
   if (!addr_ptr) {

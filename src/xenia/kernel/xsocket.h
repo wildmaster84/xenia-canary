@@ -50,6 +50,7 @@ enum class X_WSAError : uint32_t {
   X_WSANO_DATA = 0x2AFC,
   X_WSANOTINITIALISED = 0x276D,
   X_WSAEADDRINUSE = 0x2740,
+  X_WSAEALREADY = 0x2748,
 };
 
 struct XSOCKADDR {
