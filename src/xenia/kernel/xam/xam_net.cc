@@ -170,6 +170,24 @@ struct XNQOSLISTENSTATS {
 };
 static_assert_size(XNQOSLISTENSTATS, 0x1C);
 
+typedef struct {
+  xe::be<uint32_t> dwStructSize;
+  xe::be<uint32_t> lpszScheme_ptr;
+  xe::be<uint32_t> dwScheme_length;
+  xe::be<uint32_t> nScheme;
+  xe::be<uint32_t> lpszHostName_ptr;
+  xe::be<uint32_t> dwHostName_length;
+  xe::be<uint32_t> nPort;
+  xe::be<uint32_t> lpszUserName_ptr;
+  xe::be<uint32_t> dwUserName_length;
+  xe::be<uint32_t> lpszPassword_ptr;
+  xe::be<uint32_t> dwPassword_length;
+  xe::be<uint32_t> lpszUrlPath_ptr;
+  xe::be<uint32_t> dwUrlPath_length;
+  xe::be<uint32_t> lpszExtraInfo_ptr;
+  xe::be<uint32_t> dwExtraInfo_length;
+} URL_COMPONENTS, *PURL_COMPONENTS;
+
 XNetStartupParams xnet_startup_params{};
 
 void Update_XNetStartupParams(XNetStartupParams& dest,

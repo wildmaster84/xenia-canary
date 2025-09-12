@@ -66,14 +66,38 @@ X_STATUS xeExGetXConfigSetting(X_CONFIG_CATEGORY category, uint16_t setting,
                                void* buffer, uint16_t buffer_size,
                                uint16_t* required_size) {
   uint16_t setting_size = 0;
+  uint32_t retail_flags = 0;
   alignas(uint32_t) uint8_t value[4];
 
   // TODO(benvanik): have real structs here that just get copied from.
   // https://free60project.github.io/wiki/XConfig.html
   // https://github.com/oukiar/freestyledash/blob/master/Freestyle/Tools/Generic/ExConfig.h
   switch (category) {
+    case XCONFIG_STATIC_CATEGORY:
+      switch (setting) {
+        case XCONFIG_STATIC_DATA:  // XCONFIG_STATIC_DATA
+          setting_size = 270;
+          xe::store_and_swap<uint8_t>(value, 0);
+          // wants whole catgeory
+          break;
+        case XCONFIG_STATIC_FIRST_POWER_ON_DATE:  // XCONFIG_STATIC_FIRST_POWER_ON_DATE
+          setting_size = 5;
+          xe::store_and_swap<uint8_t>(value, 0);
+          break;
+        case XCONFIG_STATIC_SMC_CONFIG:  // XCONFIG_STATIC_SMC_CONFIG
+          setting_size = 256;
+          xe::store_and_swap<uint8_t>(value, 0);
+          break;
+        default:
+          XELOGW("An unimplemented setting 0x{:04X} in XCONFIG STATIC CATEGORY",
+                 static_cast<uint16_t>(setting));
+          assert_unhandled_case(setting);
+          return X_STATUS_INVALID_PARAMETER_2;
+      }
+      break;
     case XCONFIG_SECURED_CATEGORY:
       switch (setting) {
+        case XCONFIG_SECURED_MAC_ADDRESS:
         case XCONFIG_SECURED_AV_REGION:
           setting_size = 4;
           switch (cvars::video_standard) {
@@ -92,6 +116,24 @@ X_STATUS xeExGetXConfigSetting(X_CONFIG_CATEGORY category, uint16_t setting,
               xe::store_and_swap<uint32_t>(value, 0);
               break;
           }
+          break;
+        case XCONFIG_SECURED_GAME_REGION:  // XCONFIG_SECURED_GAME_REGION
+          setting_size = 2;
+          xe::store_and_swap<uint16_t>(value, 65535);
+          break;
+        case XCONFIG_SECURED_DVD_REGION:  // XCONFIG_SECURED_DVD_REGION
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);
+          break;
+        case XCONFIG_SECURED_RESET_KEY:  // XCONFIG_SECURED_RESET_KEY
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
+          break;
+          // case 0x0006:  // XCONFIG_SECURED_SYSTEM_FLAGS
+          // case 0x0007:  // XCONFIG_SECURED_POWER_MODE
+        case XCONFIG_SECURED_ONLINE_NETWORK_ID:  // XCONFIG_SECURED_ONLINE_NETWORK_ID
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);  // value[0]?
           break;
         default:
           XELOGW(
@@ -114,6 +156,10 @@ X_STATUS xeExGetXConfigSetting(X_CONFIG_CATEGORY category, uint16_t setting,
           // TODO(benvanik): get this value.
           xe::store_and_swap<uint32_t>(value, 0);
           break;
+        case XCONFIG_USER_DEFAULT_PROFILE:  // XCONFIG_DEFAULT_PROFILE
+          setting_size = 8;
+          xe::store_and_swap<uint64_t>(value, 0);
+          break;
         case XCONFIG_USER_LANGUAGE:
           setting_size = 4;
           xe::store_and_swap<uint32_t>(value, cvars::user_language);
@@ -130,12 +176,37 @@ X_STATUS xeExGetXConfigSetting(X_CONFIG_CATEGORY category, uint16_t setting,
           break;
         case XCONFIG_USER_RETAIL_FLAGS:
           setting_size = 4;
+          retail_flags |= 0x02;  // DST off
+          retail_flags |= 0x04;  // network initialized?
+          // flags |= 0x08;  // 24-hour clock
+          retail_flags |= 0X00000040;  // dashboard initial setup complete
+          retail_flags |= 0x00000080;  // Choose startup screen
+          retail_flags |= 0x02000000;  // Enable IPTV UI
+          retail_flags |= 0x0;
+          retail_flags |= 0x00001000;  // Enable IPTV UI
+
           // TODO(benvanik): get this value.
-          xe::store_and_swap<uint32_t>(value, 0x40);
+          xe::store_and_swap<uint32_t>(value, retail_flags);
+          break;
+        case XCONFIG_USER_DEVKIT_FLAGS:  // XCONFIG_USER_DEVKIT_FLAGS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0x00);
           break;
         case XCONFIG_USER_COUNTRY:
           setting_size = 1;
           value[0] = static_cast<uint8_t>(cvars::user_country);
+          break;
+        case XCONFIG_USER_SMB_CONFIG:  // XCONFIG_USER_SMB_CONFIG (0x100 byte
+                                       // string)
+          // Just set the start of the buffer to 0 so that callers
+          // don't error from an un-inited buffer
+          setting_size = 256;
+          xe::store_and_swap<uint64_t>(value, 0);  // value[0]?
+          break;
+        case XCONFIG_USER_LIVE_PUID:  // XCONFIG_USER_LIVE_PUID
+          setting_size = 8;
+          // We should get the puid from the first profile logged in.
+          xe::store_and_swap<uint64_t>(value, 0x0009E2329D404916);  // value[0]?
           break;
         case XCONFIG_USER_PC_FLAGS:
           setting_size = 1;
@@ -258,15 +329,34 @@ X_STATUS xeExGetXConfigSetting(X_CONFIG_CATEGORY category, uint16_t setting,
           setting_size = 2;
           xe::store_and_swap<int16_t>(value, X_AUTO_SHUTDOWN::AutoShutdownOff);
           break;
+        case XCONFIG_CONSOLE_WIRELESS_SETTINGS:  // XCONFIG_CONSOLE_WIRELESS_SETTINGS
+          setting_size = 256;
+          xe::store_and_swap<uint8_t>(value, 0);
+          break;
         case XCONFIG_CONSOLE_CAMERA_SETTINGS:
           // Camera Flags are added together and last byte is always 0x1
           setting_size = 4;
           xe::store_and_swap<uint32_t>(value, X_CAMERA_FLAGS::AutoAll);
           break;
+        case XCONFIG_CONSOLE_PLAYTIMERDATA:  // XCONFIG_CONSOLE_PLAYTIMERDATA
+          setting_size = 20;
+          xe::store_and_swap<int64_t>(value, 0);
+          break;
+        case XCONFIG_CONSOLE_MEDIA_DISABLEAUTOLAUNCH:  // XCONFIG_CONSOLE_MEDIA_DISABLEAUTOLAUNCH
+          setting_size = 2;
+          xe::store_and_swap<int16_t>(value, 0);
+          break;
         case XCONFIG_CONSOLE_KEYBOARD_LAYOUT:
           setting_size = 2;
           xe::store_and_swap<int16_t>(value,
                                       X_KEYBOARD_LAYOUT::KeyboardDefault);
+          break;
+        case XCONFIG_CONSOLE_PC_TITLE_EXEMPTIONS:  // XCONFIG_CONSOLE_PC_TITLE_EXEMPTIONS
+        case XCONFIG_CONSOLE_NUI:                  //  XCONFIG_CONSOLE_NUI
+        case XCONFIG_CONSOLE_VOICE:                //  XCONFIG_CONSOLE_VOICE
+        case XCONFIG_CONSOLE_RETAIL_EX_FLAGS:  //  XCONFIG_CONSOLE_RETAIL_EX_FLAGS
+          setting_size = 4;
+          xe::store_and_swap<uint32_t>(value, 0);
           break;
         default:
           XELOGW(
@@ -275,6 +365,84 @@ X_STATUS xeExGetXConfigSetting(X_CONFIG_CATEGORY category, uint16_t setting,
           assert_unhandled_case(setting);
           return X_STATUS_INVALID_PARAMETER_2;
       }
+      break;
+    case XCONFIG_MEDIA_CENTER_CATEGORY:
+      switch (setting) {
+        case XCONFIG_MEDIA_CENTER_MEDIA_PLAYER:  // XCONFIG_MEDIA_CENTER_MEDIA_PLAYER
+          setting_size = 10;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case XCONFIG_MEDIA_CENTER_XESLED_VERSION:  // XCONFIG_MEDIA_CENTER_XESLED_VERSION
+          setting_size = 10;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case XCONFIG_MEDIA_CENTER_XESLED_TRUST_SECRET:  // XCONFIG_MEDIA_CENTER_XESLED_TRUST_SECRET
+          setting_size = 20;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case XCONFIG_MEDIA_CENTER_XESLED_TRUST_CODE:  // XCONFIG_MEDIA_CENTER_XESLED_TRUST_CODE
+          setting_size = 5;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case XCONFIG_MEDIA_CENTER_XESLED_HOST_ID:  // XCONFIG_MEDIA_CENTER_XESLED_HOST_ID
+          setting_size = 20;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case XCONFIG_MEDIA_CENTER_XESLED_KEY:  // XCONFIG_MEDIA_CENTER_XESLED_KEY
+          setting_size = 1628;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case XCONFIG_MEDIA_CENTER_XESLED_HOST_MAC_ADDRESS:  // XCONFIG_MEDIA_CENTER_XESLED_HOST_MAC_ADDRESS
+          setting_size = 6;
+          xe::store_and_swap<uint8_t>(value, 0);  // value[0]?
+          break;
+        case XCONFIG_MEDIA_CENTER_SERVER_UUID:  // XCONFIG_MEDIA_CENTER_SERVER_UUID
+          setting_size = 16;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case XCONFIG_MEDIA_CENTER_SERVER_NAME:  // XCONFIG_MEDIA_CENTER_SERVER_NAME
+          setting_size = 128;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        case XCONFIG_MEDIA_CENTER_SERVER_FLAG:  // XCONFIG_MEDIA_CENTER_SERVER_FLAG
+          setting_size = 4;
+          value[0] = static_cast<uint8_t>(0);
+          break;
+        default:
+          assert_unhandled_case(setting);
+          return X_STATUS_INVALID_PARAMETER_2;
+      }
+      break;
+    case XCONFIG_IPTV_CATEGORY:
+      switch (setting) {
+        case XCONFIG_IPTV_SERVICE_PROVIDER_NAME:  // XCONFIG_IPTV_SERVICE_PROVIDER_NAME
+          setting_size = 120;
+          wchar_t value[60];
+          xe::store_and_swap<std::u16string>(value, u"iptv-org");
+          break;
+        case XCONFIG_IPTV_PROVISIONING_SERVER_URL:  // XCONFIG_IPTV_PROVISIONING_SERVER_URL
+          setting_size = 128;
+          value[64];
+          xe::store_and_swap<std::u16string>(value, u"");
+          break;
+        case XCONFIG_IPTV_SUPPORT_INFO:  // XCONFIG_IPTV_SUPPORT_INFO
+          setting_size = 128;
+          value[64];
+          xe::store_and_swap<std::u16string>(
+              value, u"https://github.com/iptv-org/iptv");
+          break;
+        case XCONFIG_IPTV_BOOTSTRAP_SERVER_URL:  // XCONFIG_IPTV_BOOTSTRAP_SERVER_URL
+          setting_size = 128;
+          value[64];
+          xe::store_and_swap<std::u16string>(value, u"");
+          break;
+        default:
+          XELOGW("An unimplemented setting 0x{:04X} in XCONFIG IPTV CATEGORY",
+                 static_cast<uint16_t>(setting));
+          assert_unhandled_case(setting);
+          return X_STATUS_INVALID_PARAMETER_2;
+      }
+
       break;
     default:
       XELOGW("An unimplemented category 0x{:04X}",

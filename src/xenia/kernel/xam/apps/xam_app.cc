@@ -136,6 +136,13 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
              data->deployment_type_ptr.get(), data->overlapped_ptr.get());
       return X_E_SUCCESS;
     }
+    case 0x0002B001:
+    case 0x8000000D: {
+      // Games used in:
+      // 4D5309C9
+      XELOGD("unk({:08X}, {:08X}), unimplemented", buffer_ptr, buffer_length);
+      return X_E_SUCCESS;
+    }
     case 0x0002B003: {
       // Games used in:
       // 4D5309C9

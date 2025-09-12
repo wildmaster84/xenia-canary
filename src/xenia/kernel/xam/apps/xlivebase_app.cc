@@ -2467,9 +2467,65 @@ X_HRESULT XLiveBaseApp::GetBannerListHot(uint32_t buffer_ptr) {
   GET_BANNER_LIST_RESPONSE* banner_list_results_ptr =
       unmarshaller->Results<GET_BANNER_LIST_RESPONSE>();
 
+  BANNER_LIST_HOT_ENTRY* banner_info_ptr =
+      reinterpret_cast<BANNER_LIST_HOT_ENTRY*>(banner_list_results_ptr + 1);
+
+  uint32_t banner_info_address = kernel_state_->memory()->HostToGuestVirtual(
+      std::to_address(banner_info_ptr));
+
+  const std::vector<std::u16string> banner = {
+      u"Dog Of War", u"Canary & Mary", u"The Real Lives Of French Wives",
+      u"Going British", u"Neo Marxio Brothers"};
+
+  char16_t* banner_names_ptr = reinterpret_cast<char16_t*>(
+      banner_info_ptr + banner_list_results_ptr->banner_count_total);
+
+  const uint32_t end_index = banner_list_results_ptr->banner_count_total;
+  uint32_t returned_banner_count = 0;
+
+  // Paging
+  for (uint32_t i = 0; i < end_index; i++) {
+    if (i >= banner.size()) {
+      break;
+    }
+    const std::u16string banner_name = banner[i];
+    const uint16_t size = static_cast<uint16_t>(banner_name.size() + 1);
+
+    xe::string_util::copy_and_swap_truncating(banner_names_ptr,
+                                              banner_name.c_str(), size);
+
+    banner_info_ptr->offer_name = kernel_state_->memory()->HostToGuestVirtual(
+        std::to_address(banner_names_ptr));
+
+    banner_info_ptr->offer_name_length = size;
+    banner_info_ptr->banner_type = 2;
+    banner_info_ptr->width = 2;
+    banner_info_ptr->height = 2;
+
+    OFFER_PRICE* banner_prices_ptr = unmarshaller->Results<OFFER_PRICE>();
+    const std::u16string price_name = u"$10.99";
+    const uint16_t price_size = static_cast<uint16_t>(price_name.size() + 1);
+
+    banner_prices_ptr->payment_type = 1;
+    banner_prices_ptr->tax_type = 0;
+    banner_prices_ptr->whole_price = 10;
+    banner_prices_ptr->fractional_price = 99;
+    banner_prices_ptr->price_text_length = price_size;
+
+    banner_prices_ptr->price_text = kernel_state_->memory()->HostToGuestVirtual(
+        std::to_address(&price_name));
+
+    banner_info_ptr->price = kernel_state_->memory()->HostToGuestVirtual(
+        std::to_address(banner_prices_ptr));
+
+    banner_info_ptr += 1;
+    banner_names_ptr += size;
+    returned_banner_count++;
+  }
+
   banner_list_results_ptr->banner_count_total = 5;
-  banner_list_results_ptr->banner_count = 0xFFFF;
-  banner_list_results_ptr->banner_list = 0xFF;
+  banner_list_results_ptr->banner_count = returned_banner_count;
+  banner_list_results_ptr->banner_list = banner_info_address;
 
   return X_E_SUCCESS;
 }

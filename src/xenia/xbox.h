@@ -145,6 +145,13 @@ typedef uint32_t X_HRESULT;
 #define X_INVALID_SOCKET (uint32_t)(~0)
 #define X_SOCKET_ERROR (uint32_t)(-1)
 
+#define X_USER_LOGON_SIGNOUT        0x23
+#define X_USER_LOGON_SIGNOUT_2      0x48    // Blades
+#define X_USER_LOGON_SIGNOUT_3      0x13    // Testing Network
+#define X_USER_LOGON_SIGNIN         0x424
+#define X_USER_LOGON_SIGNIN_2       0x25    // NXE
+#define X_USER_LOGON_SIGNIN_3       0x14    // Blades OOBE profile creation
+
 // clang-format on
 enum X_FILE_ATTRIBUTES : uint32_t {
   X_FILE_ATTRIBUTE_NONE = 0x0000,
@@ -277,6 +284,13 @@ enum : XNotificationID {
 
   // XNotification Msgr
   kXNotificationMsgrUnknown = 0x0C00000E,
+
+  // XNotification DvD Tray
+  kXNotificationDvdDriveTrayStateClosed = 0,
+  kXNotificationDvdDriveTrayStateClosing = 1,
+  kXNotificationDvdDriveTrayStateOpen = 2,
+  kXNotificationDvdDriveTrayStateOpening = 3,
+  kXNotificationDvdDriveTrayStateReading = 4,
 };
 
 enum FIRMWARE_REENTRY {

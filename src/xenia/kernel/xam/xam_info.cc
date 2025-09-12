@@ -58,6 +58,20 @@ namespace xam {
 // https://github.com/tpn/winsdk-10/blob/master/Include/10.0.14393.0/km/wdm.h#L15539
 typedef enum _MODE { KernelMode, UserMode, MaximumMode } MODE;
 
+struct RELYING_PARTY_TOKEN {
+  uint32_t reserved;
+  uint32_t length;
+  uint32_t pToken;
+};
+uint32_t dvd_tray_state_ = kXNotificationDvdDriveTrayStateClosed;
+static XNotificationID GetTrayState() { return dvd_tray_state_; }
+
+static void SetTrayState(uint32_t state) {
+  dvd_tray_state_ = state;
+  kernel_state()->BroadcastNotification(kXNotificationSystemTrayStateChanged,
+                                        state);
+}
+
 dword_result_t XamFeatureEnabled_entry(dword_t app_id) { return 0; }
 DECLARE_XAM_EXPORT1(XamFeatureEnabled, kNone, kStub);
 
@@ -88,6 +102,23 @@ dword_result_t XamGetOnlineSchema_entry() {
   return schema_guest;
 }
 DECLARE_XAM_EXPORT1(XamGetOnlineSchema, kNone, kImplemented);
+
+dword_result_t XamGetToken_entry(dword_t unkn1, lpstring_t url,
+                                 dword_t url_size, lpdword_t pToken,
+                                 dword_t overlapped) {
+  uint32_t rpt_guest =
+      kernel_memory()->SystemHeapAlloc(sizeof(RELYING_PARTY_TOKEN));
+  auto rpt = kernel_memory()->TranslateVirtual<RELYING_PARTY_TOKEN*>(rpt_guest);
+  rpt->reserved = 1;
+  rpt->length = 5;
+  auto vtoken_guest = kernel_memory()->SystemHeapAlloc(5);
+  uint8_t* vtoken = kernel_memory()->TranslateVirtual<uint8_t*>(vtoken_guest);
+  std::memcpy(vtoken, "usem\0", 5);
+  rpt->pToken = vtoken_guest;
+  *pToken = rpt_guest;
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamGetToken, kNetworking, kStub);
 
 void XamFormatDateString_entry(dword_t locale_format, qword_t filetime,
                                lpvoid_t output_buffer, dword_t output_count) {
@@ -249,6 +280,17 @@ dword_result_t XamGetSystemVersion_entry() {
 }
 DECLARE_XAM_EXPORT1(XamGetSystemVersion, kNone, kStub);
 
+dword_result_t XamUpdateGetBaseSystemVersion_entry() {
+  return XamGetSystemVersion_entry();
+}
+DECLARE_XAM_EXPORT1(XamUpdateGetBaseSystemVersion, kNone, kStub);
+
+// https://github.com/oukiar/freestyledash/blob/master/Freestyle/Tools/Generic/XamExports.h#L77
+dword_result_t XamUpdateGetCurrentSystemVersion_entry() {
+  return XamGetSystemVersion_entry();
+}
+DECLARE_XAM_EXPORT1(XamUpdateGetCurrentSystemVersion, kNone, kStub);
+
 void XCustomRegisterDynamicActions_entry() {
   // ???
 }
@@ -374,6 +416,35 @@ dword_result_t XamLoaderGetLaunchDataSize_entry(lpdword_t size_ptr) {
   return X_ERROR_SUCCESS;
 }
 DECLARE_XAM_EXPORT1(XamLoaderGetLaunchDataSize, kNone, kSketchy);
+
+dword_result_t XamLoaderGetPriorTitleId_entry(lpvoid_t unk, dword_t unk1) {
+  return 0;
+}
+DECLARE_XAM_EXPORT1(XamLoaderGetPriorTitleId, kNone, kSketchy);
+
+dword_result_t XamLoaderGetDvdTrayState_entry(lpvoid_t unk, dword_t unk1) {
+  return GetTrayState();
+}
+DECLARE_XAM_EXPORT1(XamLoaderGetDvdTrayState, kNone, kSketchy);
+
+void XamLoaderGetMediaInfo_entry(lpdword_t unk1, dword_t unk2) {
+  // 0 - No Disc
+  // 1 - Game Disc
+  // 3 - HD DVD
+  // 5 - DVD
+  // 7 - CD
+  // if (kernel_state()->file_system()->ResolvePath("\\Device\\Cdrom0")) {
+  //  xe::store_and_swap<uint32_t>(unk1, 1);
+  //} else {
+  //  xe::store_and_swap<uint32_t>(unk1, 0);
+  //}
+  xe::store_and_swap<uint32_t>(unk1, 0);
+}
+DECLARE_XAM_EXPORT1(XamLoaderGetMediaInfo, kNone, kStub);
+
+void XamLoaderLaunchTitleEx_entry(lpstring_t launch_path, lpstring_t mount_path,
+                                  lpstring_t cmdLine, dword_t flags) {}
+DECLARE_XAM_EXPORT1(XamLoaderLaunchTitleEx, kNone, kSketchy);
 
 dword_result_t XamLoaderGetLaunchData_entry(lpvoid_t buffer_ptr,
                                             dword_t buffer_size) {
@@ -814,6 +885,20 @@ DECLARE_XAM_EXPORT1(XamDoesOmniNeedConfiguration, kNone, kStub);
 
 dword_result_t XamFirstRunExperienceShouldRun_entry() { return 0; }
 DECLARE_XAM_EXPORT1(XamFirstRunExperienceShouldRun, kNone, kStub);
+
+dword_result_t XamPngDecode_entry(lpvoid_t input_ptr, dword_t buffer_input_size,
+                                  lpvoid_t output_ptr,
+                                  dword_t buffer_output_size, dword_t unk5,
+                                  dword_t unk6, lpvoid_t overlapped_ptr) {
+  X_RESULT result = X_ERROR_SUCCESS;
+  if (overlapped_ptr) {
+    kernel_state()->CompleteOverlappedImmediate(overlapped_ptr, result);
+    return X_ERROR_IO_PENDING;
+  } else {
+    return result;
+  }
+}
+DECLARE_XAM_EXPORT1(XamPngDecode, kMisc, kStub);
 
 }  // namespace xam
 }  // namespace kernel

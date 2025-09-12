@@ -867,8 +867,38 @@ dword_result_t XeKeysGetConsoleType_entry(lpdword_t type_out) {
   *type_out = 2;
   return 0;
 }
-
 DECLARE_XBOXKRNL_EXPORT1(XeKeysGetConsoleType, kNone, kImplemented);
+
+dword_result_t XeKeysGetConsoleID_entry(lpvoid_t raw_bytes,
+
+                                        lpstring_t hex_string) {
+  // We dont care about KV or using official keys
+  if (hex_string) {
+    std::string key = "245149100000\0\0";
+    strncpy(hex_string, key.c_str(), key.length());
+  }
+  return X_STATUS_SUCCESS;
+}
+DECLARE_XBOXKRNL_EXPORT1(XeKeysGetConsoleID, kNone, kImplemented);
+
+void XeCryptDesKey_entry(pointer_t<XECRYPT_DES_STATE> state_ptr,
+                         lpqword_t key) {
+  DES des(key[0]);
+  std::memcpy(state_ptr->keytab, des.get_sub_key(), 128);
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptDesKey, kNone, kImplemented);
+
+void XeCryptDesEcb_entry(pointer_t<XECRYPT_DES_STATE> state_ptr, lpqword_t inp,
+                         lpqword_t out, dword_t encrypt) {
+  DES des((ui64*)state_ptr->keytab);
+
+  if (encrypt) {
+    *out = des.encrypt(*inp);
+  } else {
+    *out = des.decrypt(*inp);
+  }
+}
+DECLARE_XBOXKRNL_EXPORT1(XeCryptDesEcb, kNone, kImplemented);
 
 }  // namespace xboxkrnl
 }  // namespace kernel

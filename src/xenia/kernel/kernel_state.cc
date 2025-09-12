@@ -319,14 +319,25 @@ object_ref<XThread> KernelState::LaunchModule(object_ref<UserModule> module) {
     return nullptr;
   }
 
+  uint32_t start_address;
+  uint32_t start_context;
+
+  start_address = module->entry_point();
+  start_context = 0;
+
+  if (!start_address) {
+    start_address = module->GetProcAddressByOrdinal(1);  // PlayBootAnimation
+    start_context = module->hmodule_ptr();
+  }
+
   SetExecutableModule(module);
   XELOGI("KernelState: Launching module...");
 
   // Create a thread to run in.
   // We start suspended so we can run the debugger prep.
   auto thread = object_ref<XThread>(
-      new XThread(kernel_state(), module->stack_size(), 0,
-                  module->entry_point(), 0, X_CREATE_SUSPENDED, true, true));
+      new XThread(kernel_state(), module->stack_size(), 0, start_address,
+                  start_context, X_CREATE_SUSPENDED, true, true));
 
   // We know this is the 'main thread'.
   thread->set_name("Main XThread");
@@ -944,6 +955,10 @@ void KernelState::RegisterNotifyListener(XNotifyListener* listener) {
 
     listener->EnqueueNotification(kXNotificationSystemTrayStateChanged,
                                   X_DVD_DISC_STATE::XBOX_360_GAME_DISC);
+
+    listener->EnqueueNotification(kXNotificationSystemStorageDevicesChanged, 0);
+    listener->EnqueueNotification(kXNotificationSystemStorageDevicesChanged, 1);
+    listener->EnqueueNotification(kXNotificationLivePresenceChanged, 1);
   }
 
   if (!has_notified_live_startup_ && listener->mask() & kXNotifyLive) {

@@ -90,6 +90,17 @@ dword_result_t XNotifyGetNext_entry(dword_t handle, dword_t match_id,
 }
 DECLARE_XAM_EXPORT2(XNotifyGetNext, kNone, kImplemented, kHighFrequency);
 
+dword_result_t XNotifyBroadcast_entry(dword_t notification, dword_t data,
+                                      dword_t unk) {
+  XNotificationID id = notification;
+  if (!id) {
+    XELOGI("XNotifyBroadcast: New ID {:08x}", notification.value());
+  }
+  kernel_state()->BroadcastNotification(notification, data);
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XNotifyBroadcast, kUI, kStub);
+
 dword_result_t XNotifyDelayUI_entry(dword_t delay_ms) {
   // Ignored.
   return 0;
