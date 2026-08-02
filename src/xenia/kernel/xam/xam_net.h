@@ -10,8 +10,11 @@
 #ifndef XENIA_KERNEL_XAM_XAM_NET_H_
 #define XENIA_KERNEL_XAM_XAM_NET_H_
 
+#include <atomic>
 #include <future>
 #include <mutex>
+
+#include "xenia/kernel/xnet.h"
 
 namespace xe {
 namespace kernel {

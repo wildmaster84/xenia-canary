@@ -100,9 +100,15 @@ X_STATUS XSocket::Initialize(AddressFamily af, Type type, Protocol proto) {
 }
 
 int XSocket::Close() {
-  WSACancelOverlappedIO();
+  std::unique_lock lock(receive_mutex_);
+  if (active_overlapped_ && !(active_overlapped_->offset_high & 1)) {
+    active_overlapped_->offset_high |= 2;
+  }
+  lock.unlock();
 
-  int ret = 0;
+  std::unique_lock socket_lock(receive_socket_mutex_);
+
+  int ret = X_ERROR_SUCCESS;
 
 #if XE_PLATFORM_WIN32
   ret = closesocket(static_cast<SOCKET>(native_handle_));
@@ -112,8 +118,9 @@ int XSocket::Close() {
 
   if (ret == X_ERROR_SUCCESS) {
     socket_closed_ = true;
+    native_handle_ = X_INVALID_SOCKET;
   } else {
-    XELOGE("Socket close failed: {}", XWSAGetLastError());
+    XELOGE("Socket close failed: {}", WSAGetLastError());
   }
 
   return ret;
@@ -346,7 +353,7 @@ X_STATUS XSocket::Listen(int backlog) {
 
 object_ref<XSocket> XSocket::Accept(XSOCKADDR_IN* name, int* name_len) {
   sockaddr sa = {};
-  socklen_t addrlen = 0;
+  socklen_t addrlen = sizeof(sockaddr);
   const bool is_name_and_name_len_available = name && name_len;
 
   if (is_name_and_name_len_available) {

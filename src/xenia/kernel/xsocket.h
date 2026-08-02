@@ -276,6 +276,12 @@ class XSocket : public XObject {
   std::mutex incoming_packet_mutex_;
   std::queue<uint8_t*> incoming_packets_;
 
+  std::future<int> polling_task_;
+
+  std::mutex receive_mutex_;
+  std::condition_variable receive_cv_;
+  XWSAOVERLAPPED* active_overlapped_ = nullptr;
+
   std::map<XWSAOVERLAPPED*, std::future<int32_t>> send_polling_tasks_;
   std::map<XWSAOVERLAPPED*, std::future<int32_t>> receive_polling_tasks_;
 

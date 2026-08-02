@@ -7,7 +7,12 @@
  ******************************************************************************
  */
 
+#include <algorithm>
+#include <cstdlib>
+#include <memory>
+#include <mutex>
 #include <random>
+#include <unordered_map>
 
 // clang-format off
 // We want to include platform.h first to define NOMINMAX to prevent window.h
@@ -17,11 +22,13 @@
 // clang-format on
 
 #include "xenia/base/logging.h"
+#include "xenia/cpu/processor.h"
 #include "xenia/kernel/XLiveAPI.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/net_utils.h"
 #include "xenia/kernel/util/network_adapter_manager.h"
 #include "xenia/kernel/util/shim_utils.h"
+#include "xenia/kernel/xam/content_manager.h"
 #include "xenia/kernel/xam/xam_module.h"
 #include "xenia/kernel/xam/xam_net.h"
 #include "xenia/kernel/xam/xam_private.h"
@@ -29,6 +36,7 @@
 #include "xenia/kernel/xboxkrnl/xboxkrnl_modules.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 #include "xenia/kernel/xevent.h"
+#include "xenia/kernel/xhttp.h"
 #include "xenia/kernel/xsocket.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
@@ -42,8 +50,6 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #endif
-
-DECLARE_bool(xhttp);
 
 DECLARE_bool(logging);
 
@@ -334,7 +340,7 @@ dword_result_t XamGetToken_entry(dword_t user_index, lpstring_t url_ptr,
     const uint32_t mock_token_len = static_cast<uint32_t>(mock_token.size());
 
     const uint32_t token_data_addrress =
-        kernel_memory()->SystemHeapAlloc(mock_token.size());
+        kernel_memory()->SystemHeapAlloc(mock_token_len);
 
     uint8_t* token_data =
         kernel_memory()->TranslateVirtual<uint8_t*>(token_data_addrress);
@@ -1602,364 +1608,6 @@ dword_result_t XampXAuthGetTitleBuffer_entry() {
 }
 DECLARE_XAM_EXPORT1(XampXAuthGetTitleBuffer, kNetworking, kStub);
 
-dword_result_t NetDll_XHttpStartup_entry(dword_t caller, dword_t reserved,
-                                         dword_t reserved_ptr) {
-  // Console returns 1 even without network access
-
-  if (kernel_state()->emulator()->title_id() == kDashboardID ||
-      kernel_state()->emulator()->title_id() == kAvatarEditorID) {
-    return 1;
-  }
-
-  // We're suppose to set error code if we fail function
-  // XThread::SetLastError(XHTTP_ERROR_CONNECTION_ERROR);
-  return cvars::xhttp;
-}
-DECLARE_XAM_EXPORT1(NetDll_XHttpStartup, kNetworking, kStub);
-
-void NetDll_XHttpShutdown_entry(dword_t caller) {}
-DECLARE_XAM_EXPORT1(NetDll_XHttpShutdown, kNetworking, kStub);
-
-dword_result_t NetDll_XHttpCrackUrl_entry(
-    dword_t caller, lpstring_t url_ptr, dword_t url_length, dword_t flags,
-    pointer_t<XHTTP_URL_COMPONENTS> url_components_ptr) {
-  if (!url_ptr || !url_components_ptr ||
-      url_components_ptr->struct_size != sizeof(XHTTP_URL_COMPONENTS)) {
-    XThread::SetLastError(X_ERROR_INVALID_PARAMETER);
-    return false;
-  }
-
-  // X_ICU_ESCAPE is unsupported ignore it.
-
-  bool insufficient_buffer =
-      url_components_ptr->scheme_ptr && !url_components_ptr->scheme_length ||
-      url_components_ptr->host_name_ptr &&
-          !url_components_ptr->host_name_length ||
-      url_components_ptr->user_name_ptr &&
-          !url_components_ptr->user_name_length ||
-      url_components_ptr->password_ptr &&
-          !url_components_ptr->password_length ||
-      url_components_ptr->url_path_ptr &&
-          !url_components_ptr->url_path_length ||
-      url_components_ptr->extra_info_ptr &&
-          !url_components_ptr->extra_info_length;
-
-  auto decode_string = [](const std::string encoded_component) -> std::string {
-    CURL* curl = curl_easy_init();
-
-    if (!curl) {
-      return "";
-    }
-
-    std::string decoded_component;
-    int component_length = 0;
-
-    char* decoded_output =
-        curl_easy_unescape(curl, encoded_component.c_str(),
-                           decoded_component.size(), &component_length);
-
-    if (decoded_output) {
-      decoded_component = std::string(decoded_output, component_length);
-      curl_free(decoded_output);
-    }
-
-    curl_easy_cleanup(curl);
-
-    return decoded_component;
-  };
-
-  std::string url_to_process = url_ptr.value();
-
-  if (url_length) {
-    url_to_process = url_ptr.value().substr(0, url_length);
-  }
-
-  CURLU* url = curl_url();
-
-  if (url) {
-    CURLUcode rc = curl_url_set(url, CURLUPART_URL, url_to_process.c_str(), 0);
-
-    // Assert if URL is bad format
-    assert_zero(rc);
-
-    if (rc) {
-      url_components_ptr->scheme = -1;
-    }
-
-    curl_url_cleanup(url);
-  }
-
-  std::regex url_regex(
-      R"(^([a-zA-Z]+)://(?:([^:@]+)(?::([^:@]*))?@)?([^/:]+)(?::(\d+))?((/[^?#]*)(\?[^#]*)?(#[^ ]*)?)?$)",
-      std::regex_constants::icase);
-
-  std::smatch matches;
-
-  auto ProcessComponent = [decode_string, flags, kernel_state = kernel_state()](
-                              const uint32_t component_result_ptr,
-                              uint32_t& component_ptr,
-                              uint32_t& component_length_ptr, uint32_t size) {
-    if (component_ptr) {
-      // Include null terminator
-      const uint32_t min_buffer_size = size + 1;
-
-      if (!component_length_ptr || component_length_ptr < min_buffer_size) {
-        component_length_ptr = min_buffer_size;
-        return false;
-      }
-
-      char* result_dst_ptr =
-          kernel_state->memory()->TranslateVirtual<char*>(component_ptr);
-
-      char* result_src_ptr =
-          kernel_state->memory()->TranslateVirtual<char*>(component_result_ptr);
-
-      const std::string component_data(result_src_ptr, size);
-      const std::string processed_data =
-          flags & X_ICU_DECODE ? decode_string(component_data) : component_data;
-
-      xe::string_util::copy_truncating(result_dst_ptr, processed_data.c_str(),
-                                       component_length_ptr);
-      component_length_ptr = processed_data.size();
-    } else if (component_length_ptr) {
-      component_ptr = component_result_ptr;
-      component_length_ptr = size;
-    }
-
-    return true;
-  };
-
-  bool result = true;
-
-  if (std::regex_match(url_to_process, matches, url_regex)) {
-    for (size_t i = 0; i < matches.size(); ++i) {
-      std::ssub_match sub_match = matches[i];
-
-      if (sub_match.matched) {
-        const uint32_t result_ptr = url_ptr.guest_address() +
-                                    static_cast<uint32_t>(matches.position(i));
-
-        const uint32_t length = static_cast<uint32_t>(sub_match.length());
-
-        const X_URL_COMPONENTS current_component =
-            static_cast<X_URL_COMPONENTS>(i);
-
-        switch (current_component) {
-          case X_URL_COMPONENTS::Full: {
-            // Skip
-            continue;
-          } break;
-          case X_URL_COMPONENTS::Protocol: {
-            uint32_t scheme_ptr_out = url_components_ptr->scheme_ptr;
-            uint32_t scheme_length_out = url_components_ptr->scheme_length;
-
-            const bool component_result = ProcessComponent(
-                result_ptr, scheme_ptr_out, scheme_length_out, length);
-
-            url_components_ptr->scheme_length = scheme_length_out;
-
-            if (component_result) {
-              if (!url_components_ptr->scheme_ptr) {
-                url_components_ptr->scheme_ptr = scheme_ptr_out;
-              }
-            } else {
-              insufficient_buffer = true;
-            }
-
-            const char* scheme_data_ptr =
-                kernel_state()->memory()->TranslateVirtual<char*>(result_ptr);
-
-            std::string schema_data = std::string(scheme_data_ptr, length);
-
-            X_INTERNET_SCHEME scheme_type = {};
-
-            // Set default scheme and port
-            if (utf8::equal_case(schema_data.c_str(), "http")) {
-              scheme_type = X_INTERNET_SCHEME::HTTP;
-              url_components_ptr->port = 80;
-            } else if (utf8::equal_case(schema_data.c_str(), "https")) {
-              scheme_type = X_INTERNET_SCHEME::HTTPS;
-              url_components_ptr->port = 443;
-            }
-
-            url_components_ptr->scheme = static_cast<uint32_t>(scheme_type);
-          } break;
-          case X_URL_COMPONENTS::Username: {
-            uint32_t username_ptr_out = url_components_ptr->user_name_ptr;
-            uint32_t username_length_out = url_components_ptr->user_name_length;
-
-            const bool component_result = ProcessComponent(
-                result_ptr, username_ptr_out, username_length_out, length);
-
-            url_components_ptr->user_name_length = username_length_out;
-
-            if (component_result) {
-              if (!url_components_ptr->user_name_ptr) {
-                url_components_ptr->user_name_ptr = username_ptr_out;
-              }
-            } else {
-              insufficient_buffer = true;
-            }
-          } break;
-          case X_URL_COMPONENTS::Password: {
-            uint32_t password_ptr_out = url_components_ptr->password_ptr;
-            uint32_t password_length_out = url_components_ptr->password_length;
-
-            const bool component_result = ProcessComponent(
-                result_ptr, password_ptr_out, password_length_out, length);
-
-            url_components_ptr->password_length = password_length_out;
-
-            if (component_result) {
-              if (!url_components_ptr->password_ptr) {
-                url_components_ptr->password_ptr = password_ptr_out;
-              }
-            } else {
-              insufficient_buffer = true;
-            }
-          } break;
-          case X_URL_COMPONENTS::Host: {
-            uint32_t host_ptr_out = url_components_ptr->host_name_ptr;
-            uint32_t host_length_out = url_components_ptr->host_name_length;
-
-            const bool component_result = ProcessComponent(
-                result_ptr, host_ptr_out, host_length_out, length);
-
-            url_components_ptr->host_name_length = host_length_out;
-
-            if (component_result) {
-              if (!url_components_ptr->host_name_ptr) {
-                url_components_ptr->host_name_ptr = host_ptr_out;
-              }
-            } else {
-              insufficient_buffer = true;
-            }
-          } break;
-          case X_URL_COMPONENTS::Port: {
-            const char* port_str_ptr =
-                kernel_memory()->TranslateVirtual<char*>(result_ptr);
-
-            std::string port_str = std::string(port_str_ptr, length);
-
-            const uint16_t port =
-                xe::string_util::from_string<uint16_t>(port_str);
-
-            url_components_ptr->port = port;
-          } break;
-          case X_URL_COMPONENTS::Path: {
-            uint32_t path_ptr_out = url_components_ptr->url_path_ptr;
-            uint32_t path_length_out = url_components_ptr->url_path_length;
-
-            const bool component_result = ProcessComponent(
-                result_ptr, path_ptr_out, path_length_out, length);
-
-            url_components_ptr->url_path_length = path_length_out;
-
-            if (component_result) {
-              if (!url_components_ptr->url_path_ptr) {
-                url_components_ptr->url_path_ptr = path_ptr_out;
-              }
-            } else {
-              insufficient_buffer = true;
-            }
-          } break;
-          case X_URL_COMPONENTS::Query: {
-            uint32_t extra_ptr_out = url_components_ptr->extra_info_ptr;
-            uint32_t extra_length_out = url_components_ptr->extra_info_length;
-
-            const bool component_result = ProcessComponent(
-                result_ptr, extra_ptr_out, extra_length_out, length);
-
-            url_components_ptr->extra_info_length = extra_length_out;
-
-            if (component_result) {
-              if (!url_components_ptr->extra_info_ptr) {
-                url_components_ptr->extra_info_ptr = extra_ptr_out;
-              }
-            } else {
-              insufficient_buffer = true;
-            }
-          } break;
-        }
-      }
-    }
-  } else {
-    XThread::SetLastError(X_ERROR_INVALID_PARAMETER);
-    result = false;
-  }
-
-  // Return after processing so the component length is set
-  if (insufficient_buffer) {
-    XThread::SetLastError(X_ERROR_INSUFFICIENT_BUFFER);
-    result = false;
-  }
-
-  return result;
-}
-DECLARE_XAM_EXPORT1(NetDll_XHttpCrackUrl, kNetworking, kImplemented);
-
-dword_result_t NetDll_XHttpDoWork_entry(dword_t caller, dword_t handle,
-                                        dword_t unk) {
-  XThread::SetLastError(X_ERROR_SUCCESS);
-
-  return 0;
-}
-DECLARE_XAM_EXPORT1(NetDll_XHttpDoWork, kNetworking, kStub);
-
-dword_result_t NetDll_XHttpOpenRequest_entry(
-    dword_t caller, dword_t connect_handle, lpstring_t verb, lpstring_t path,
-    lpstring_t version, lpstring_t referrer, lpstring_t reserved,
-    dword_t flag) {
-  std::string http_verb = "";
-  std::string object_name = "";
-
-  if (verb) {
-    http_verb = *verb;
-  }
-
-  if (path) {
-    object_name = *path;
-  }
-
-  XELOGI("OpenRequest: {} {}", http_verb, object_name);
-
-  // Return invalid handle (not NULL)
-  return 1;
-}
-DECLARE_XAM_EXPORT1(NetDll_XHttpOpenRequest, kNetworking, kStub);
-
-dword_result_t NetDll_XHttpSetStatusCallback_entry(dword_t caller,
-                                                   dword_t handle,
-                                                   lpdword_t callback_ptr,
-                                                   dword_t flags, dword_t unk) {
-  return 1;
-}
-DECLARE_XAM_EXPORT1(NetDll_XHttpSetStatusCallback, kNetworking, kStub);
-
-dword_result_t NetDll_XHttpSendRequest_entry(dword_t caller, dword_t hrequest,
-                                             lpstring_t headers,
-                                             dword_t hlength, lpvoid_t unkn1,
-                                             dword_t unkn2, dword_t unk3,
-                                             dword_t unk4) {
-  std::string request_headers = "";
-
-  if (headers) {
-    request_headers = *headers;
-  }
-
-  XELOGI("Headers {}", request_headers);
-  return false;
-}
-DECLARE_XAM_EXPORT1(NetDll_XHttpSendRequest, kNetworking, kStub);
-
-dword_result_t NetDll_XHttpConnect_entry(dword_t caller, dword_t hSession,
-                                         lpstring_t host, dword_t port,
-                                         dword_t flags) {
-  // XThread::SetLastError(XHTTP_ERROR_CONNECTION_ERROR);
-  return 0;
-}
-DECLARE_XAM_EXPORT1(NetDll_XHttpConnect, kNetworking, kStub);
-
 dword_result_t NetDll_inet_addr_entry(lpstring_t addr_ptr) {
   if (!addr_ptr) {
     return -1;
@@ -2028,15 +1676,7 @@ dword_result_t NetDll_closesocket_entry(dword_t caller, dword_t socket_handle) {
 
   // Release the handle on failure?
   int result = socket->Close();
-
-  if (!result) {
-    socket->ReleaseHandle();
-  }
-
-  if (result == X_SOCKET_ERROR) {
-    XThread::SetLastError(socket->XWSAGetLastError());
-  }
-
+  socket->ReleaseHandle();
   return result;
 }
 DECLARE_XAM_EXPORT1(NetDll_closesocket, kNetworking, kImplemented);
@@ -2700,6 +2340,178 @@ dword_result_t XamBackgroundDownloadItemGetHistoryStatus_entry(
   return X_ERROR_NOT_FOUND;
 }
 DECLARE_XAM_EXPORT1(XamBackgroundDownloadItemGetHistoryStatus, kMisc, kStub);
+
+dword_result_t NetDll_XHttpStartup_entry(dword_t caller, dword_t reserved,
+                                         dword_t reserved_ptr) {
+  return XHttp::Startup();
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpStartup, kNetworking, kStub);
+
+void NetDll_XHttpShutdown_entry(dword_t caller) { XHttp::Shutdown(); }
+DECLARE_XAM_EXPORT1(NetDll_XHttpShutdown, kNetworking, kStub);
+
+dword_result_t NetDll_XHttpOpen_entry(dword_t caller, lpstring_t user_agent,
+                                      dword_t access_type,
+                                      lpstring_t proxy_name,
+                                      lpstring_t proxy_bypass, dword_t flags) {
+  return XHttp::Open(user_agent ? user_agent.value() : std::string(), flags);
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpOpen, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpCloseHandle_entry(dword_t caller, dword_t handle) {
+  return XHttp::CloseHandle(handle);
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpCloseHandle, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpCrackUrl_entry(
+    dword_t caller, lpstring_t url_ptr, dword_t url_length, dword_t flags,
+    pointer_t<XHTTP_URL_COMPONENTS> url_components_ptr) {
+  if (!url_ptr || !url_components_ptr) {
+    XThread::SetLastError(X_ERROR_INVALID_PARAMETER);
+    return 0;
+  }
+  return XHttp::CrackUrl(url_ptr.value(), url_ptr.guest_address(), url_length,
+                         flags, url_components_ptr)
+             ? 1
+             : 0;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpCrackUrl, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpCrackUrlW_entry(
+    dword_t caller, lpu16string_t url_ptr, dword_t url_length, dword_t flags,
+    pointer_t<XHTTP_URL_COMPONENTS> url_components_ptr) {
+  if (!url_ptr || !url_components_ptr) {
+    XThread::SetLastError(X_ERROR_INVALID_PARAMETER);
+    return 0;
+  }
+  return XHttp::CrackUrlW(url_ptr.value(), url_ptr.guest_address(), url_length,
+                          flags, url_components_ptr)
+             ? 1
+             : 0;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpCrackUrlW, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpDoWork_entry(dword_t caller, dword_t hSession,
+                                        dword_t wait_ms) {
+  return XHttp::DoWork();
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpDoWork, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpSetOption_entry(dword_t caller, dword_t handle,
+                                           dword_t option, lpvoid_t buffer,
+                                           dword_t buffer_length) {
+  return XHttp::SetOption(handle, option,
+                          buffer ? buffer.as<const void*>() : nullptr,
+                          buffer_length);
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpSetOption, kNetworking, kStub);
+
+dword_result_t NetDll_XHttpQueryOption_entry(dword_t caller, dword_t handle,
+                                             dword_t option, lpvoid_t buffer,
+                                             lpdword_t buffer_length) {
+  uint32_t length = buffer_length ? static_cast<uint32_t>(*buffer_length) : 0;
+  const bool ok =
+      XHttp::QueryOption(handle, option, buffer ? buffer.as<void*>() : nullptr,
+                         buffer_length ? &length : nullptr);
+  if (buffer_length) {
+    *buffer_length = length;
+  }
+  return ok;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpQueryOption, kNetworking, kStub);
+
+dword_result_t NetDll_XHttpOpenRequest_entry(
+    dword_t caller, dword_t connect_handle, lpstring_t verb, lpstring_t path,
+    lpstring_t version, lpstring_t referrer, lpstring_t reserved,
+    dword_t flag) {
+  return XHttp::OpenRequest(connect_handle, verb ? verb.value() : std::string(),
+                            path ? path.value() : std::string(), flag);
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpOpenRequest, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpSetStatusCallback_entry(dword_t caller,
+                                                   dword_t handle,
+                                                   lpdword_t callback_ptr,
+                                                   dword_t flags, dword_t unk) {
+  return XHttp::SetStatusCallback(handle, callback_ptr.guest_address());
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpSetStatusCallback, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpSendRequest_entry(dword_t caller, dword_t hrequest,
+                                             lpstring_t headers,
+                                             dword_t hlength, lpvoid_t optional,
+                                             dword_t optional_length,
+                                             dword_t total_length,
+                                             dword_t context) {
+  return XHttp::SendRequest(hrequest, headers, hlength, optional,
+                            optional_length, total_length, context);
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpSendRequest, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpWriteData_entry(dword_t caller, dword_t hrequest,
+                                           lpvoid_t buffer,
+                                           dword_t bytes_to_write,
+                                           lpdword_t bytes_written_ptr) {
+  uint32_t written = 0;
+  const bool ok =
+      XHttp::WriteData(hrequest, buffer ? buffer.as<const void*>() : nullptr,
+                       bytes_to_write, bytes_written_ptr ? &written : nullptr);
+  if (ok && bytes_written_ptr) {
+    *bytes_written_ptr = written;
+  }
+  return ok;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpWriteData, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpReceiveResponse_entry(dword_t caller,
+                                                 dword_t hrequest,
+                                                 dword_t reserved) {
+  return XHttp::ReceiveResponse(hrequest);
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpReceiveResponse, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpQueryHeaders_entry(dword_t caller, dword_t hrequest,
+                                              dword_t info_level,
+                                              lpstring_t name, lpvoid_t buffer,
+                                              lpdword_t buffer_length_ptr,
+                                              lpdword_t index_ptr) {
+  uint32_t length =
+      buffer_length_ptr ? static_cast<uint32_t>(*buffer_length_ptr) : 0;
+  const std::string name_str = name ? name.value() : std::string();
+  const bool ok = XHttp::QueryHeaders(
+      hrequest, info_level, name ? name_str.c_str() : nullptr,
+      buffer ? buffer.as<void*>() : nullptr, length,
+      buffer_length_ptr ? &length : nullptr);
+  if (buffer_length_ptr) {
+    *buffer_length_ptr = length;
+  }
+  return ok;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpQueryHeaders, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpReadData_entry(dword_t caller, dword_t hrequest,
+                                          lpvoid_t buffer,
+                                          dword_t bytes_to_read,
+                                          lpdword_t bytes_read_ptr) {
+  uint32_t read = 0;
+  const bool ok =
+      XHttp::ReadData(hrequest, buffer ? buffer.as<void*>() : nullptr,
+                      buffer ? buffer.guest_address() : 0, bytes_to_read,
+                      bytes_read_ptr ? &read : nullptr);
+  if (ok && bytes_read_ptr) {
+    *bytes_read_ptr = read;
+  }
+  return ok;
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpReadData, kNetworking, kImplemented);
+
+dword_result_t NetDll_XHttpConnect_entry(dword_t caller, dword_t hSession,
+                                         lpstring_t host, dword_t port,
+                                         dword_t flags) {
+  return XHttp::Connect(hSession, host ? host.value() : std::string(),
+                        static_cast<uint16_t>(port), flags);
+}
+DECLARE_XAM_EXPORT1(NetDll_XHttpConnect, kNetworking, kImplemented);
 
 // Remove completed UPnP actions
 void CleanupUPnPActions() {
