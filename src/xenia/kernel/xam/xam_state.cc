@@ -8,10 +8,12 @@
  */
 
 #include "xenia/kernel/xam/xam_state.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
 #include "xenia/kernel/util/friends_util.h"
 #include "xenia/kernel/xam/online_schema.h"
+#include "xenia/vfs/devices/host_path_device.h"
 
 namespace xe {
 namespace kernel {
@@ -27,6 +29,18 @@ XamState::XamState(Emulator* emulator, KernelState* kernel_state)
   }
   content_manager_ =
       std::make_unique<ContentManager>(kernel_state, content_root);
+
+  // Register \\Device\\NetworkStorageCache as a HostPathDevice mapping to
+  // content_root/.cloud_cache so games can resolve cloud storage paths.
+  if (!content_root.empty()) {
+    auto cloud_cache_path = content_root / ".cloud_cache";
+    xe::filesystem::CreateFolder(cloud_cache_path);
+    auto device = std::make_unique<vfs::HostPathDevice>(
+        "\\Device\\NetworkStorageCache", cloud_cache_path, false);
+    if (device->Initialize()) {
+      kernel_state->file_system()->RegisterDevice(std::move(device));
+    }
+  }
 
   user_tracker_ = std::make_unique<UserTracker>();
   profile_manager_ = std::make_unique<ProfileManager>(

@@ -31,6 +31,14 @@
 
 namespace xe {
 namespace kernel {
+namespace xam {
+class CloudStorage;
+}  // namespace xam
+}  // namespace kernel
+}  // namespace xe
+
+namespace xe {
+namespace kernel {
 class KernelState;
 }  // namespace kernel
 }  // namespace xe
@@ -82,6 +90,10 @@ class ContentManager {
       const uint32_t device_id, const uint64_t xuid, const uint32_t title_id,
       const XContentType content_type) const;
 
+  std::vector<XCONTENT_DATA_INTERNAL> ListCloudContent(
+      const uint32_t device_id, const uint64_t xuid, const uint32_t title_id,
+      const XContentType content_type);
+
   bool ContentExists(const uint64_t xuid, const XCONTENT_DATA_INTERNAL& data);
 
   X_RESULT CreateContent(const std::string_view root_name, const uint64_t xuid,
@@ -123,6 +135,9 @@ class ContentManager {
   std::filesystem::path ResolvePackageRoot(
       const uint64_t xuid, const uint32_t title_id,
       const XContentType content_type) const;
+  std::filesystem::path ResolveCloudPackageRoot(
+      const uint64_t xuid, const uint32_t title_id,
+      const XContentType content_type) const;
   std::filesystem::path ResolvePackagePath(const uint64_t xuid,
                                            const XCONTENT_DATA_INTERNAL& data);
   std::unordered_set<uint32_t> FindPublisherTitleIds(
@@ -135,6 +150,7 @@ class ContentManager {
 
   KernelState* kernel_state_;
   std::filesystem::path root_path_;
+  std::unique_ptr<CloudStorage> cloud_storage_;
 
   // TODO(benvanik): remove use of global lock, it's bad here!
   xe::global_critical_region global_critical_region_;

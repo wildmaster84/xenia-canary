@@ -8,6 +8,8 @@
  */
 
 #include "xenia/kernel/xam/content_manager.h"
+#include "xenia/kernel/xam/cloud_storage.h"
+#include "xenia/kernel/xam/xam_content_device.h"
 #include "xenia/kernel/xam/xcontent/xcontent_package.h"
 #include "xenia/kernel/xam/xcontent/xcontent_package_container.h"
 #include "xenia/kernel/xam/xcontent/xcontent_package_directory.h"
@@ -33,7 +35,9 @@ static std::string_view kSpaFilename = "spa.bin";
 
 ContentManager::ContentManager(KernelState* kernel_state,
                                const std::filesystem::path& root_path)
-    : kernel_state_(kernel_state), root_path_(root_path) {}
+    : kernel_state_(kernel_state), root_path_(root_path) {
+  cloud_storage_ = std::make_unique<CloudStorage>();
+}
 
 ContentManager::~ContentManager() = default;
 
@@ -188,6 +192,23 @@ std::filesystem::path ContentManager::ResolvePackageRoot(
   return root_path_ / xuid_str / title_id_str / content_type_str;
 }
 
+std::filesystem::path ContentManager::ResolveCloudPackageRoot(
+    uint64_t xuid, uint32_t title_id, XContentType content_type) const {
+  if (title_id == kCurrentlyRunningTitleId) {
+    title_id = kernel_state_->title_id();
+  }
+
+  auto xuid_str = fmt::format("{:016X}", xuid);
+  auto title_id_str = fmt::format("{:08X}", title_id);
+  auto content_type_str =
+      fmt::format("{:08X}", static_cast<uint32_t>(content_type));
+
+  // Cloud cache path:
+  // content_root/.cloud_cache/xuid/title_id/content_type/
+  return root_path_ / ".cloud_cache" / xuid_str / title_id_str /
+         content_type_str;
+}
+
 std::filesystem::path ContentManager::ResolvePackagePath(
     const uint64_t xuid, const XCONTENT_DATA_INTERNAL& data) {
   // Content path:
@@ -202,8 +223,14 @@ std::filesystem::path ContentManager::ResolvePackagePath(
       used_xuid = 0;
     }
 
-    auto package_root =
-        ResolvePackageRoot(used_xuid, title_id, data.content_type);
+    // Use separate cache directory for cloud storage saves
+    std::filesystem::path package_root;
+    if (data.device_id == static_cast<uint32_t>(DummyDeviceId::CloudStorage)) {
+      package_root =
+          ResolveCloudPackageRoot(used_xuid, title_id, data.content_type);
+    } else {
+      package_root = ResolvePackageRoot(used_xuid, title_id, data.content_type);
+    }
     std::string final_name = xe::string_util::trim(data.file_name());
     return package_root / xe::to_path(final_name);
   };
@@ -400,8 +427,51 @@ std::vector<XCONTENT_DATA_INTERNAL> ContentManager::ListContentODD(
   return result;
 }
 
+std::vector<XCONTENT_DATA_INTERNAL> ContentManager::ListCloudContent(
+    const uint32_t device_id, const uint64_t xuid, const uint32_t title_id,
+    const XContentType content_type) {
+  std::vector<XCONTENT_DATA_INTERNAL> result;
+
+  if (!cloud_storage_) {
+    return result;
+  }
+
+  uint64_t used_xuid = xuid;
+  if (used_xuid == 0) {
+    UserProfile* profile = kernel_state_->xam_state()->profile_manager()->GetProfile(static_cast<uint8_t>(0));
+    used_xuid = profile->xuid();
+  }
+
+  uint32_t used_title_id = title_id;
+  if (used_title_id == kCurrentlyRunningTitleId) {
+    used_title_id = kernel_state_->title_id();
+  }
+
+  auto blobs = cloud_storage_->List(used_xuid, used_title_id, content_type);
+  for (const auto& blob : blobs) {
+    XCONTENT_DATA_INTERNAL data{};
+    data.device_id = device_id;
+    data.content_type = static_cast<XContentType>(blob.content_type);
+    data.set_display_name(blob.display_name);
+    data.set_file_name(blob.file_name);
+    data.xuid = used_xuid;
+    data.title_id = blob.title_id != 0 ? blob.title_id : used_title_id;
+    data.content_size = blob.size;
+    result.emplace_back(std::move(data));
+  }
+
+  return result;
+}
+
 bool ContentManager::ContentExists(const uint64_t xuid,
                                    const XCONTENT_DATA_INTERNAL& data) {
+  if (data.device_id == static_cast<uint32_t>(DummyDeviceId::CloudStorage)) {
+    uint32_t title_id = data.title_id == kCurrentlyRunningTitleId
+                            ? kernel_state_->title_id()
+                            : data.title_id.get();
+    return cloud_storage_->Exists(xuid, title_id, data.content_type,
+                                  data.file_name());
+  }
   auto path = ResolvePackagePath(xuid, data);
   return std::filesystem::exists(path);
 }
@@ -429,6 +499,19 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name,
     return X_ERROR_ACCESS_DENIED;
   }
 
+  // Set device_id and needs_upload on the created package
+  auto pkg_it = std::ranges::find_if(
+      std::as_const(mounted_packages_), [&data](const auto& e) {
+        return e.second->GetContentMetadata() == data;
+      });
+  if (pkg_it != mounted_packages_.end()) {
+    pkg_it->second->SetDeviceId(data.device_id);
+    if (data.device_id == static_cast<uint32_t>(DummyDeviceId::CloudStorage)) {
+      pkg_it->second->SetNeedsUpload(true);
+      pkg_it->second->SnapshotContent();
+    }
+  }
+
   return X_ERROR_SUCCESS;
 }
 
@@ -444,6 +527,20 @@ X_RESULT ContentManager::OpenContent(const std::string_view root_name,
   }
 
   auto package_path = ResolvePackagePath(xuid, data);
+
+  // Download from cloud if this is a cloud storage save and no local copy
+  if (data.device_id == static_cast<uint32_t>(DummyDeviceId::CloudStorage) &&
+      !std::filesystem::exists(package_path)) {
+    uint32_t title_id = data.title_id == kCurrentlyRunningTitleId
+                            ? kernel_state_->title_id()
+                            : data.title_id.get();
+    std::filesystem::create_directories(package_path);
+    if (!cloud_storage_->Download(xuid, title_id, data.content_type,
+                                  data.file_name(), package_path)) {
+      XELOGW("CloudStorage: download failed, using existing local copy");
+    }
+  }
+
   if (!std::filesystem::exists(package_path)) {
     // Does not exist, must be created.
     return X_ERROR_FILE_NOT_FOUND;
@@ -455,6 +552,11 @@ X_RESULT ContentManager::OpenContent(const std::string_view root_name,
     return X_ERROR_FILE_NOT_FOUND;
   }
 
+  package->SetDeviceId(data.device_id);
+  if (data.device_id == static_cast<uint32_t>(DummyDeviceId::CloudStorage)) {
+    package->SetNeedsUpload(true);
+    package->SnapshotContent();
+  }
   content_license = package->GetContentMetadata().license_mask;
   if (static_cast<uint32_t>(cvars::license_mask) > 1) {
     content_license |= cvars::license_mask;
@@ -488,6 +590,21 @@ X_RESULT ContentManager::CloseContent(const std::string_view root_name) {
   if (itr == mounted_packages_.cend()) {
     return X_ERROR_FILE_NOT_FOUND;
   }
+
+  // Upload to cloud if this is a cloud storage save that was modified
+  auto content_data = itr->second->GetContentMetadata();
+  if (content_data.device_id ==
+          static_cast<uint32_t>(DummyDeviceId::CloudStorage) &&
+      itr->second->NeedsUpload() && itr->second->ContentChanged()) {
+    uint32_t title_id = content_data.title_id == kCurrentlyRunningTitleId
+                            ? kernel_state_->title_id()
+                            : content_data.title_id.get();
+    auto package_path = itr->second->GetPackageHostPath();
+    cloud_storage_->Upload(content_data.xuid.get(), title_id,
+                           content_data.content_type, content_data.file_name(),
+                           content_data.display_name(), package_path);
+  }
+
   CloseOpenedFilesFromContent(root_name);
 
   mounted_packages_.erase(itr);
@@ -564,6 +681,15 @@ X_RESULT ContentManager::DeleteContent(const uint64_t xuid,
   }
 
   auto package_path = ResolvePackagePath(xuid, data);
+
+  // Delete from cloud if this is a cloud storage save
+  if (data.device_id == static_cast<uint32_t>(DummyDeviceId::CloudStorage)) {
+    uint32_t title_id = data.title_id == kCurrentlyRunningTitleId
+                            ? kernel_state_->title_id()
+                            : data.title_id.get();
+    cloud_storage_->Delete(xuid, title_id, data.content_type, data.file_name());
+  }
+
   if (std::filesystem::remove_all(package_path) > 0) {
     return X_ERROR_SUCCESS;
   } else {
