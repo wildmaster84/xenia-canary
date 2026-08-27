@@ -27,11 +27,13 @@ enum class DeviceType : uint32_t {
   TransferCable = 8,
   Sapphire = 15,
   USBMASS = 16,  // Added in 8955
+  CloudStorage = 0x00400002,
 };
 
 enum class DummyDeviceId : uint32_t {
   HDD = 1,
   ODD = 2,
+  CloudStorage = 3,
 };
 
 struct DummyDeviceInfo {

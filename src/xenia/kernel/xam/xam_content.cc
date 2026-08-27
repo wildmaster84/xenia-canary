@@ -118,6 +118,9 @@ dword_result_t xeXamContentResolve(
         // Or GAME, but D: usually means DVD drive meanwhile GAME always
         // pinpoints to game, even if it is running from HDD
         root_device_path = "D:\\content\\";
+      } else if (content_data.device_id ==
+                 static_cast<uint32_t>(DummyDeviceId::CloudStorage)) {
+        root_device_path = "\\Device\\NetworkStorageCache\\";
       } else {
         return X_ERROR_INVALID_PARAMETER;
       }
@@ -228,6 +231,17 @@ dword_result_t XamContentCreateEnumeratorInternal_entry(
     // Remove duplicates
     enumerated_content.erase(std::ranges::unique(enumerated_content).begin(),
                              enumerated_content.end());
+  }
+
+  if (device_info && device_info->device_id == DummyDeviceId::CloudStorage) {
+    auto cloud_enumerated_data =
+        kernel_state()->content_manager()->ListCloudContent(
+            static_cast<uint32_t>(DummyDeviceId::CloudStorage), xuid, title,
+            static_cast<XContentType>(content_type.value()));
+
+    enumerated_content.insert(enumerated_content.end(),
+                              cloud_enumerated_data.cbegin(),
+                              cloud_enumerated_data.cend());
   }
 
   if (!device_info || device_info->device_id == DummyDeviceId::ODD) {

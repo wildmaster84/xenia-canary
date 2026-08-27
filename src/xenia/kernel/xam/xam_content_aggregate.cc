@@ -134,6 +134,18 @@ dword_result_t XamContentAggregateCreateEnumerator_entry(qword_t xuid,
     }
   }
 
+  if (device_info && device_info->device_id == DummyDeviceId::CloudStorage) {
+    uint32_t used_title_id = title_id ? title_id.value()
+                                       : kernel_state()->title_id();
+    auto cloud_datas = kernel_state()->content_manager()->ListCloudContent(
+        static_cast<uint32_t>(DummyDeviceId::CloudStorage),
+        xuid == -1 ? 0 : static_cast<uint64_t>(xuid), used_title_id,
+        content_type_enum);
+    for (const auto& content_data : cloud_datas) {
+      e->AppendItem(content_data);
+    }
+  }
+
   // if (!device_info || device_info->device_type == DeviceType::ODD) {
   //   AddODDContentTest(e, content_type_enum);
   // }
