@@ -1086,7 +1086,8 @@ void KernelState::RegisterNotifyListener(XNotifyListener* listener) {
 
     listener->EnqueueNotification(kXNotificationLiveConnectionChanged,
                                   live_connection_state);
-
+    listener->EnqueueNotification(kXNotificationSystemStorageDevicesChanged, 0);
+    listener->EnqueueNotification(kXNotificationSystemStorageDevicesChanged, 1);
     listener->EnqueueNotification(kXNotificationLiveVoicechatAway, 0);
   }
 
