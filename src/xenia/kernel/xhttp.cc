@@ -438,7 +438,7 @@ uint32_t XHttpDoWork(uint32_t h_session, uint32_t wait_ms) {
     ExecuteCompletion(completion);
   }
 
-  return static_cast<uint32_t>(ERROR_SUCCESS);
+  return true;
 }
 
 }  // namespace kernel
