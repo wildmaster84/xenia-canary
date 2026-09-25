@@ -117,7 +117,7 @@ bool ContentPackage::RegisterRootName(string_key_insensitive root_name) {
 XCONTENT_DATA_INTERNAL ContentPackage::GetContentMetadata() const {
   XCONTENT_DATA_INTERNAL metadata{};
 
-  metadata.device_id = 1;
+  metadata.device_id = device_id_;
   metadata.title_id = header_.content_metadata.execution_info.title_id;
   metadata.content_type = header_.content_metadata.content_type;
   metadata.content_size = header_.content_metadata.content_size;
@@ -174,6 +174,7 @@ void ContentPackage::InitializePackageHeader(
   header_.content_header.magic = XContentPackageType::kCon;
 
   header_.content_metadata.content_type = metadata.content_type;
+  device_id_ = metadata.device_id;
   header_.content_metadata.data_file_count = 1;
   header_.content_metadata.metadata_version = 2;  // ?
   header_.content_metadata.volume_type = XContentVolumeType::kStfs;
@@ -224,6 +225,41 @@ bool ContentPackage::IsValidPackage() const {
   }
 
   return true;
+}
+
+void ContentPackage::SnapshotContent() {
+  snapshot_file_count_ = 0;
+  snapshot_total_size_ = 0;
+  if (!std::filesystem::exists(host_path_)) {
+    return;
+  }
+  for (const auto& entry : std::filesystem::directory_iterator(host_path_)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    snapshot_file_count_++;
+    snapshot_total_size_ += entry.file_size();
+  }
+}
+
+bool ContentPackage::ContentChanged() const {
+  if (snapshot_file_count_ == 0 && snapshot_total_size_ == 0) {
+    // No snapshot taken (new package) — always upload
+    return true;
+  }
+  size_t file_count = 0;
+  uint64_t total_size = 0;
+  if (std::filesystem::exists(host_path_)) {
+    for (const auto& entry : std::filesystem::directory_iterator(host_path_)) {
+      if (!entry.is_regular_file()) {
+        continue;
+      }
+      file_count++;
+      total_size += entry.file_size();
+    }
+  }
+  return file_count != snapshot_file_count_ ||
+         total_size != snapshot_total_size_;
 }
 
 }  // namespace xam

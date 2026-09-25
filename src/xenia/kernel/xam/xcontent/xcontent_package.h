@@ -43,6 +43,17 @@ class ContentPackage {
                  const xex2_opt_execution_info* execution_info,
                  const SpaInfo* spa_info);
 
+  void SetDeviceId(uint32_t device_id) { device_id_ = device_id; }
+  uint32_t GetDeviceId() const { return device_id_; }
+
+  void SetNeedsUpload(bool needs_upload) { needs_upload_ = needs_upload; }
+  bool NeedsUpload() const { return needs_upload_; }
+
+  // Snapshot current package contents for change detection
+  void SnapshotContent();
+  // Returns true if package contents changed since last snapshot
+  bool ContentChanged() const;
+
   virtual ~ContentPackage();
 
   // Allows to read package content. Creates dedicated device.
@@ -96,6 +107,13 @@ class ContentPackage {
   vfs::Device* device_;
   // Separate entry for license for backward compatibility
   uint32_t license_mask_ = 0;
+  // Device ID this package was opened from (HDD, CloudStorage, ODD)
+  uint32_t device_id_ = 1;
+  // Whether this package should be uploaded to cloud on close
+  bool needs_upload_ = false;
+  // Content snapshot for change detection (file count + total size)
+  size_t snapshot_file_count_ = 0;
+  uint64_t snapshot_total_size_ = 0;
 
  private:
   void InitializePackageHeader(const XCONTENT_DATA_INTERNAL& metadata,
